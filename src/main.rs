@@ -10,7 +10,9 @@ use polars_io::json::JsonWriter;
 use polars_io::SerWriter;
 use serde::Deserialize;
 use tokio::task::spawn_blocking;
+use tokio::time::Instant;
 use tokio_util::io::{ReaderStream, SyncIoBridge};
+use tracing::info;
 
 #[derive(Deserialize)]
 struct QueryRequest{
@@ -41,7 +43,10 @@ impl IntoResponse for QueryResponse{
 
 #[tokio::main]
 async fn main() {
+    let start = Instant::now();
+    tracing_subscriber::fmt::init();
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    info!("uQuery server started in {:?}",start.elapsed());
     axum::serve(listener, app()).await.unwrap();
 }
 
