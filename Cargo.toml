@@ -16,6 +16,5 @@ serde_json = "1.0.117"
 futures-util = "0.3.30"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-
-[dev-dependencies]
-tower = "0.4.13"
+tower = "*"
+tower-http = { version = "*", features = ["compression-gzip"]}

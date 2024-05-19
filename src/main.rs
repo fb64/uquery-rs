@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use tokio::task::spawn_blocking;
 use tokio::time::Instant;
 use tokio_util::io::{ReaderStream, SyncIoBridge};
+use tower::ServiceBuilder;
+use tower_http::compression::CompressionLayer;
 use tracing::info;
 
 const CONTENT_TYPE_CSV:&str = "text/csv";
@@ -82,6 +84,7 @@ async fn main() {
 
 fn app() -> Router{
     Router::new().route("/", post(query))
+        .layer(ServiceBuilder::new().layer(CompressionLayer::new()))
 }
 
 async fn query(headers:HeaderMap, Json(payload): Json<QueryRequest>) -> Result<QueryResponse,StatusCode>{
@@ -119,7 +122,7 @@ mod tests {
     use axum::body::Body;
     use axum::http;
     use axum::http::{Request, StatusCode};
-    use axum::http::header::{ACCEPT, CONTENT_TYPE};
+    use axum::http::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE};
     use axum::response::Response;
     use tower::ServiceExt;
     use crate::{app, QueryRequest, QueryResponseFormat};
@@ -128,10 +131,11 @@ mod tests {
     use polars_io::ipc::IpcStreamReader;
     use polars_io::SerReader;
 
+    const TEST_QUERY:&str = "SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)";
+
     #[tokio::test]
     async fn query_json_test() {
-        let sql = String::from("SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)");
-        let response = perform_request(QueryRequest{query: sql},QueryResponseFormat::JSON).await;
+        let response = perform_request(QueryRequest{query: TEST_QUERY.to_string()},QueryResponseFormat::JSON).await;
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
         assert_eq!(from_utf8(&*result).unwrap(),"{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}\n");
@@ -139,8 +143,7 @@ mod tests {
 
     #[tokio::test]
     async fn query_csv_test() {
-        let sql = String::from("SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)");
-        let response = perform_request(QueryRequest{query: sql},QueryResponseFormat::CSV).await;
+        let response = perform_request(QueryRequest{query: TEST_QUERY.to_string()},QueryResponseFormat::CSV).await;
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
         assert_eq!(from_utf8(&*result).unwrap(),"Id,Name,Description\n1,Rust,\"Safe, concurrent, performant systems language\"\n");
@@ -148,8 +151,10 @@ mod tests {
 
     #[tokio::test]
     async fn query_arrow_test() -> Result<(), PolarsError> {
-        let sql = String::from("SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)");
-        let response = perform_request(QueryRequest { query: sql }, QueryResponseFormat::ARROW).await;
+        let response = perform_request(
+            QueryRequest { query: TEST_QUERY.to_string() },
+            QueryResponseFormat::ARROW
+        ).await;
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
         let df = IpcStreamReader::new(Cursor::new(result)).finish()?;
@@ -165,19 +170,38 @@ mod tests {
         //assert_eq!(from_utf8(&*result).unwrap(),"{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}\n");
     }
 
-    async fn perform_request(request:QueryRequest,format:QueryResponseFormat) -> Response{
+
+    #[tokio::test]
+    async fn query_json_gzip_test() {
+        let response = perform_request_compress(
+            QueryRequest{query: TEST_QUERY.to_string()},
+            QueryResponseFormat::JSON,
+            true
+        ).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get(CONTENT_ENCODING).unwrap(),"gzip");
+        let result = read_response(response).await;
+        assert_eq!(result[0], 0x1fu8);
+        assert_eq!(result[1], 0x8bu8);
+    }
+
+    async fn perform_request(request:QueryRequest,format:QueryResponseFormat)-> Response{
+        perform_request_compress(request,format,false).await
+    }
+    async fn perform_request_compress(request:QueryRequest,format:QueryResponseFormat,compress:bool) -> Response{
         let json = serde_json::to_string(&request).unwrap();
-        app()
-            .oneshot(
-                Request::builder()
-                    .method(http::Method::POST)
-                    .header(CONTENT_TYPE,"application/json")
-                    .header(ACCEPT,format.to_string())
-                    .uri("/")
-                    .body(Body::from(json)).unwrap()
-            )
-            .await
-            .unwrap()
+
+        let mut builder = Request::builder()
+            .method(http::Method::POST)
+            .uri("/")
+            .header(CONTENT_TYPE,"application/json")
+            .header(ACCEPT,format.to_string());
+        if compress {
+            builder = builder.header(ACCEPT_ENCODING,"gzip");
+        }
+        app().oneshot(
+                builder.body(Body::from(json)).unwrap()
+            ).await.unwrap()
     }
 
     async fn read_response(response:Response) -> Vec<u8>{
