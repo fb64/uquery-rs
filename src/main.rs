@@ -1,11 +1,13 @@
 use std::fmt::Display;
+use std::sync::{Arc, Mutex};
 use axum::{Json, Router};
 use axum::body::Body;
+use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::http::header::{ACCEPT, CONTENT_TYPE};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use duckdb::Connection;
+use duckdb::{Connection};
 use polars::prelude::DataFrame;
 use polars_core::utils::accumulate_dataframes_vertical_unchecked;
 use polars_io::csv::CsvWriter;
@@ -73,22 +75,36 @@ impl IntoResponse for QueryResponse{
     }
 }
 
+struct UQueryState{
+    duckdb_connection: Mutex<Connection>
+}
+
+impl UQueryState {
+    fn get_new_connection(&self) -> Connection{
+        self.duckdb_connection.try_lock().unwrap().try_clone().unwrap()
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let start = Instant::now();
     tracing_subscriber::fmt::init();
+
+    let conn = Connection::open_in_memory().unwrap();
+    let state = Arc::new(UQueryState{duckdb_connection:Mutex::new(conn)});
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
     info!("uQuery server started in {:?}",start.elapsed());
-    axum::serve(listener, app()).await.unwrap();
+    axum::serve(listener, app(state)).await.unwrap();
 }
 
-fn app() -> Router{
-    Router::new().route("/", post(query))
+fn app(state:Arc<UQueryState>) -> Router{
+    Router::new().route("/", post(query)).with_state(state)
         .layer(ServiceBuilder::new().layer(CompressionLayer::new()))
 }
 
-async fn query(headers:HeaderMap, Json(payload): Json<QueryRequest>) -> Result<QueryResponse,StatusCode>{
-    let response = handle_query(payload.query);
+async fn query(State(state):State<Arc<UQueryState>>,headers:HeaderMap, Json(payload): Json<QueryRequest>) -> Result<QueryResponse,StatusCode>{
+    let conn = state.get_new_connection();
+    let response = handle_query(conn, payload.query);
 
     match response {
         Ok(df) => {
@@ -106,8 +122,8 @@ async fn query(headers:HeaderMap, Json(payload): Json<QueryRequest>) -> Result<Q
 
 }
 
-fn handle_query(sql:String) -> Result<DataFrame,duckdb::Error>{
-    let conn = Connection::open_in_memory()?;
+fn handle_query(conn:Connection,sql:String) -> Result<DataFrame,duckdb::Error>{
+    //let conn = Connection::open_in_memory()?;
     let mut stm = conn.prepare(sql.as_str())?;
     let pl = stm.query_polars([])?;
     let df = accumulate_dataframes_vertical_unchecked(pl);
@@ -119,13 +135,15 @@ fn handle_query(sql:String) -> Result<DataFrame,duckdb::Error>{
 mod tests {
     use std::io::Cursor;
     use std::str::from_utf8;
+    use std::sync::{Arc, Mutex};
     use axum::body::Body;
     use axum::http;
     use axum::http::{Request, StatusCode};
     use axum::http::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE};
     use axum::response::Response;
+    use duckdb::Connection;
     use tower::ServiceExt;
-    use crate::{app, QueryRequest, QueryResponseFormat};
+    use crate::{app, QueryRequest, QueryResponseFormat, UQueryState};
     use futures_util::StreamExt;
     use polars_core::error::PolarsError;
     use polars_io::ipc::IpcStreamReader;
@@ -199,7 +217,9 @@ mod tests {
         if compress {
             builder = builder.header(ACCEPT_ENCODING,"gzip");
         }
-        app().oneshot(
+        let conn = Connection::open_in_memory().unwrap();
+        let state = Arc::new(UQueryState{duckdb_connection:Mutex::new(conn)});
+        app(state).oneshot(
                 builder.body(Body::from(json)).unwrap()
             ).await.unwrap()
     }
