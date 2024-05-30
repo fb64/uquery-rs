@@ -1,19 +1,18 @@
 use std::fmt::Display;
 use std::sync::{Arc, Mutex};
+
+use arrow::array::RecordBatchWriter;
+use arrow::csv::Writer;
+use arrow::ipc::writer::StreamWriter;
+use arrow::json::ArrayWriter;
 use axum::{Json, Router};
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::http::header::{ACCEPT, CONTENT_TYPE};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::post;
-use duckdb::{Connection};
-use polars::prelude::DataFrame;
-use polars_core::utils::accumulate_dataframes_vertical_unchecked;
-use polars_io::csv::CsvWriter;
-use polars_io::ipc::IpcStreamWriter;
-use polars_io::json::JsonWriter;
-use polars_io::SerWriter;
+use duckdb::{Arrow, Connection};
 use serde::{Deserialize, Serialize};
 use tokio::task::spawn_blocking;
 use tokio::time::Instant;
@@ -48,32 +47,6 @@ impl Display for QueryResponseFormat{
     }
 }
 
-struct QueryResponse{
-    data: DataFrame,
-    format: QueryResponseFormat
-}
-
-impl IntoResponse for QueryResponse{
-    fn into_response(mut self) -> Response {
-        let content_type = self.format.to_string();
-        let (tx, rx) = tokio::io::duplex(65_536);
-        let reader_stream = ReaderStream::new(rx);
-        spawn_blocking(move || {
-            let bridge = SyncIoBridge::new(tx);
-            match self.format {
-                QueryResponseFormat::CSV => {CsvWriter::new(bridge).finish(&mut self.data).unwrap()}
-                QueryResponseFormat::JSON => {JsonWriter::new(bridge).finish(&mut self.data).unwrap()}
-                QueryResponseFormat::ARROW => {IpcStreamWriter::new(bridge).finish(&mut self.data).unwrap()}
-            }
-        });
-
-        axum::response::Response::builder()
-            .status(StatusCode::OK)
-            .header(CONTENT_TYPE, content_type)
-            .body(Body::from_stream(reader_stream))
-            .unwrap()
-    }
-}
 
 struct UQueryState{
     duckdb_connection: Mutex<Connection>
@@ -102,32 +75,54 @@ fn app(state:Arc<UQueryState>) -> Router{
         .layer(ServiceBuilder::new().layer(CompressionLayer::new()))
 }
 
-async fn query(State(state):State<Arc<UQueryState>>,headers:HeaderMap, Json(payload): Json<QueryRequest>) -> Result<QueryResponse,StatusCode>{
-    let conn = state.get_new_connection();
-    let response = handle_query(conn, payload.query);
-
-    match response {
-        Ok(df) => {
-            match headers.get(ACCEPT).unwrap().to_str().unwrap().to_lowercase().as_str() {
-                CONTENT_TYPE_JSON => {Ok(QueryResponse{data:df,format:QueryResponseFormat::JSON})}
-                CONTENT_TYPE_CSV => {Ok(QueryResponse{data:df,format:QueryResponseFormat::CSV})}
-                CONTENT_TYPE_ARROW => {Ok(QueryResponse{data:df,format:QueryResponseFormat::ARROW})}
-                _ => {
-                    Err(StatusCode::NOT_ACCEPTABLE)
-                }
-            }
+async fn query(State(state):State<Arc<UQueryState>>,headers:HeaderMap, Json(payload): Json<QueryRequest>) -> Result<Response,StatusCode>{
+    let format = match headers.get(ACCEPT).unwrap().to_str().unwrap().to_lowercase().as_str() {
+        CONTENT_TYPE_JSON => {Ok(QueryResponseFormat::JSON)}
+        CONTENT_TYPE_CSV => {Ok(QueryResponseFormat::CSV)}
+        CONTENT_TYPE_ARROW => {Ok(QueryResponseFormat::ARROW)}
+        _ => {
+            Err(StatusCode::NOT_ACCEPTABLE)
         }
-        Err(_) => {Err(StatusCode::BAD_REQUEST)}
-    }
+    }?;
 
+    let content_type = format.to_string();
+
+    let (tx, rx) = tokio::io::duplex(65_536);
+    let reader_stream = ReaderStream::new(rx);
+    spawn_blocking(move || {
+        let bridge = SyncIoBridge::new(tx);
+        let conn = state.get_new_connection();
+        let mut statement = conn.prepare(payload.query.as_str()).unwrap();
+        let arrow = statement.query_arrow([]).unwrap();
+
+        match format {
+            QueryResponseFormat::CSV => {
+                let writer = Writer::new(bridge);
+                handle_response_write(writer, arrow);
+            }
+            QueryResponseFormat::JSON => {
+                let writer = ArrayWriter::new(bridge);
+                handle_response_write(writer, arrow);
+            }
+            QueryResponseFormat::ARROW => {
+                let writer = StreamWriter::try_new(bridge, &*arrow.get_schema()).unwrap();
+                handle_response_write(writer, arrow);
+            }
+        };
+    });
+
+    Ok(axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, content_type)
+        .body(Body::from_stream(reader_stream))
+        .unwrap())
 }
 
-fn handle_query(conn:Connection,sql:String) -> Result<DataFrame,duckdb::Error>{
-    //let conn = Connection::open_in_memory()?;
-    let mut stm = conn.prepare(sql.as_str())?;
-    let pl = stm.query_polars([])?;
-    let df = accumulate_dataframes_vertical_unchecked(pl);
-    Ok(df)
+fn handle_response_write<W: RecordBatchWriter>(mut writer: W, data: Arrow) {
+    for rb in data {
+        writer.write(&rb).unwrap();
+    }
+    writer.close().unwrap();
 }
 
 
@@ -136,18 +131,20 @@ mod tests {
     use std::io::Cursor;
     use std::str::from_utf8;
     use std::sync::{Arc, Mutex};
+
     use axum::body::Body;
     use axum::http;
     use axum::http::{Request, StatusCode};
     use axum::http::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE};
     use axum::response::Response;
     use duckdb::Connection;
-    use tower::ServiceExt;
-    use crate::{app, QueryRequest, QueryResponseFormat, UQueryState};
     use futures_util::StreamExt;
-    use polars_core::error::PolarsError;
+    use polars::error::PolarsError;
     use polars_io::ipc::IpcStreamReader;
     use polars_io::SerReader;
+    use tower::ServiceExt;
+
+    use crate::{app, QueryRequest, QueryResponseFormat, UQueryState};
 
     const TEST_QUERY:&str = "SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)";
 
@@ -156,7 +153,7 @@ mod tests {
         let response = perform_request(QueryRequest{query: TEST_QUERY.to_string()},QueryResponseFormat::JSON).await;
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
-        assert_eq!(from_utf8(&*result).unwrap(),"{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}\n");
+        assert_eq!(from_utf8(&*result).unwrap(),"[{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}]");
     }
 
     #[tokio::test]
@@ -177,8 +174,8 @@ mod tests {
         let result = read_response(response).await;
         let df = IpcStreamReader::new(Cursor::new(result)).finish()?;
         let id = df.column("Id")?.i32()?.get(0).unwrap();
-        let name = df.column("Name")?.utf8()?.get(0).unwrap();
-        let description = df.column("Description")?.utf8()?.get(0).unwrap();
+        let name = df.column("Name")?.str()?.get(0).unwrap();
+        let description = df.column("Description")?.str()?.get(0).unwrap();
         assert_eq!(id, 1);
         assert_eq!(name, "Rust");
         assert_eq!(description, "Safe, concurrent, performant systems language");

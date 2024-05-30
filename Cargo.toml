@@ -8,13 +8,16 @@ axum = { version = "0.7.5" }
 tokio = {version="1.37.0",features = ["full"] }
 tokio-util = { version = "*",features = ["io","io-util"] }
 serde = { version = "1.0.202", features = ["derive"] }
-duckdb = { version = "0.10.2", features = ["bundled","polars"] }
-polars-core = { version = "*"}
-polars = { version = "*", features = ["lazy"] }
-polars-io = { version = "*",features = ["ipc_streaming","json"]}
+duckdb = { version = "0.10.2", features = ["bundled"] }
+arrow = {version = "*", features = ["arrow-json","arrow-csv","arrow-ipc"]}
 serde_json = "1.0.117"
 futures-util = "0.3.30"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 tower = "*"
 tower-http = { version = "*", features = ["compression-gzip"]}
+
+[dev-dependencies]
+polars = { version = "0.40.0"}
+polars-core = { version = "0.40.0" }
+polars-io = { version = "0.40.0",features = ["ipc_streaming","json"]}
