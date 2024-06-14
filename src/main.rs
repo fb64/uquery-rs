@@ -23,22 +23,22 @@ use tracing::{debug, info};
 
 mod cli;
 
-const CONTENT_TYPE_CSV:&str = "text/csv";
-const CONTENT_TYPE_JSON:&str = "application/json";
-const CONTENT_TYPE_ARROW:&str = "application/vnd.apache.arrow.stream";
+const CONTENT_TYPE_CSV: &str = "text/csv";
+const CONTENT_TYPE_JSON: &str = "application/json";
+const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
 
-#[derive(Deserialize,Serialize)]
-struct QueryRequest{
-    query: String
+#[derive(Deserialize, Serialize)]
+struct QueryRequest {
+    query: String,
 }
 
-enum QueryResponseFormat{
+enum QueryResponseFormat {
     CSV,
     JSON,
-    ARROW
+    ARROW,
 }
 
-impl Display for QueryResponseFormat{
+impl Display for QueryResponseFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let str = match self {
             QueryResponseFormat::CSV => CONTENT_TYPE_CSV.to_string(),
@@ -50,12 +50,12 @@ impl Display for QueryResponseFormat{
 }
 
 
-struct UQueryState{
-    duckdb_connection: Mutex<Connection>
+struct UQueryState {
+    duckdb_connection: Mutex<Connection>,
 }
 
 impl UQueryState {
-    fn get_new_connection(&self) -> Connection{
+    fn get_new_connection(&self) -> Connection {
         self.duckdb_connection.try_lock().unwrap().try_clone().unwrap()
     }
 }
@@ -67,23 +67,23 @@ async fn main() {
 
     let addr = format!("{}:{}", cli_options.addr, cli_options.port);
     let conn = Connection::open_in_memory().unwrap();
-    let state = Arc::new(UQueryState{duckdb_connection:Mutex::new(conn)});
+    let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn) });
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     info!("uQuery server started in {:?}",start.elapsed());
     debug!("listening on {}",addr);
     axum::serve(listener, app(state)).await.unwrap();
 }
 
-fn app(state:Arc<UQueryState>) -> Router{
+fn app(state: Arc<UQueryState>) -> Router {
     Router::new().route("/", post(query)).with_state(state)
         .layer(ServiceBuilder::new().layer(CompressionLayer::new()))
 }
 
-async fn query(State(state):State<Arc<UQueryState>>,headers:HeaderMap, Json(payload): Json<QueryRequest>) -> Result<Response,StatusCode>{
+async fn query(State(state): State<Arc<UQueryState>>, headers: HeaderMap, Json(payload): Json<QueryRequest>) -> Result<Response, StatusCode> {
     let format = match headers.get(ACCEPT).unwrap().to_str().unwrap().to_lowercase().as_str() {
-        CONTENT_TYPE_JSON => {Ok(QueryResponseFormat::JSON)}
-        CONTENT_TYPE_CSV => {Ok(QueryResponseFormat::CSV)}
-        CONTENT_TYPE_ARROW => {Ok(QueryResponseFormat::ARROW)}
+        CONTENT_TYPE_JSON => { Ok(QueryResponseFormat::JSON) }
+        CONTENT_TYPE_CSV => { Ok(QueryResponseFormat::CSV) }
+        CONTENT_TYPE_ARROW => { Ok(QueryResponseFormat::ARROW) }
         _ => {
             Err(StatusCode::NOT_ACCEPTABLE)
         }
@@ -150,29 +150,29 @@ mod tests {
 
     use crate::{app, QueryRequest, QueryResponseFormat, UQueryState};
 
-    const TEST_QUERY:&str = "SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)";
+    const TEST_QUERY: &str = "SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)";
 
     #[tokio::test]
     async fn query_json_test() {
-        let response = perform_request(QueryRequest{query: TEST_QUERY.to_string()},QueryResponseFormat::JSON).await;
+        let response = perform_request(QueryRequest { query: TEST_QUERY.to_string() }, QueryResponseFormat::JSON).await;
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
-        assert_eq!(from_utf8(&*result).unwrap(),"[{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}]");
+        assert_eq!(from_utf8(&*result).unwrap(), "[{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}]");
     }
 
     #[tokio::test]
     async fn query_csv_test() {
-        let response = perform_request(QueryRequest{query: TEST_QUERY.to_string()},QueryResponseFormat::CSV).await;
+        let response = perform_request(QueryRequest { query: TEST_QUERY.to_string() }, QueryResponseFormat::CSV).await;
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
-        assert_eq!(from_utf8(&*result).unwrap(),"Id,Name,Description\n1,Rust,\"Safe, concurrent, performant systems language\"\n");
+        assert_eq!(from_utf8(&*result).unwrap(), "Id,Name,Description\n1,Rust,\"Safe, concurrent, performant systems language\"\n");
     }
 
     #[tokio::test]
     async fn query_arrow_test() -> Result<(), PolarsError> {
         let response = perform_request(
             QueryRequest { query: TEST_QUERY.to_string() },
-            QueryResponseFormat::ARROW
+            QueryResponseFormat::ARROW,
         ).await;
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
@@ -193,39 +193,40 @@ mod tests {
     #[tokio::test]
     async fn query_json_gzip_test() {
         let response = perform_request_compress(
-            QueryRequest{query: TEST_QUERY.to_string()},
+            QueryRequest { query: TEST_QUERY.to_string() },
             QueryResponseFormat::JSON,
-            true
+            true,
         ).await;
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers().get(CONTENT_ENCODING).unwrap(),"gzip");
+        assert_eq!(response.headers().get(CONTENT_ENCODING).unwrap(), "gzip");
         let result = read_response(response).await;
         assert_eq!(result[0], 0x1fu8);
         assert_eq!(result[1], 0x8bu8);
     }
 
-    async fn perform_request(request:QueryRequest,format:QueryResponseFormat)-> Response{
-        perform_request_compress(request,format,false).await
+    async fn perform_request(request: QueryRequest, format: QueryResponseFormat) -> Response {
+        perform_request_compress(request, format, false).await
     }
-    async fn perform_request_compress(request:QueryRequest,format:QueryResponseFormat,compress:bool) -> Response{
+
+    async fn perform_request_compress(request: QueryRequest, format: QueryResponseFormat, compress: bool) -> Response {
         let json = serde_json::to_string(&request).unwrap();
 
         let mut builder = Request::builder()
             .method(http::Method::POST)
             .uri("/")
-            .header(CONTENT_TYPE,"application/json")
-            .header(ACCEPT,format.to_string());
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, format.to_string());
         if compress {
-            builder = builder.header(ACCEPT_ENCODING,"gzip");
+            builder = builder.header(ACCEPT_ENCODING, "gzip");
         }
         let conn = Connection::open_in_memory().unwrap();
-        let state = Arc::new(UQueryState{duckdb_connection:Mutex::new(conn)});
+        let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn) });
         app(state).oneshot(
-                builder.body(Body::from(json)).unwrap()
-            ).await.unwrap()
+            builder.body(Body::from(json)).unwrap()
+        ).await.unwrap()
     }
 
-    async fn read_response(response:Response) -> Vec<u8>{
+    async fn read_response(response: Response) -> Vec<u8> {
         let mut stream = response.into_body().into_data_stream();
         let mut result = Vec::new();
         while let Some(item) = stream.next().await {

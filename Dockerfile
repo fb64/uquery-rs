@@ -8,7 +8,7 @@ RUN cargo build --release
 FROM scratch
 LABEL org.opencontainers.image.authors="florian@flob.fr"
 LABEL org.opencontainers.image.source="https://github.com/fb64/uquery-rs"
-LABEL org.opencontainers.image.description="uA lightweight API to query good old data files (CSV, Json, Parquet ...) with SQL"
+LABEL org.opencontainers.image.description="A lightweight server that provide a simple API to query good old data files (CSV, Json, Parquet ...) with SQL"
 EXPOSE 8080
 COPY --from=builder /build/target/release/uquery .
 ENTRYPOINT ["./uquery"]

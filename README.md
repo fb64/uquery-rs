@@ -6,7 +6,7 @@
 
 # uQuery
 
-**uQuery** (micro query) is a lightweight data querying solution designed for various file formats, including CSV, JSON, and Parquet. Developed in **Rust**, this micro-sized project harnesses the power **DuckDB**. Here’s a quick overview:
+**uQuery** (micro query) is a lightweight data querying solution designed for various file formats, including CSV, JSON, and Parquet. Developed in **Rust**, this micro-sized project harnesses the power of [DuckDB](https://duckdb.org/). Here’s a quick overview:
 
 1. **Format-Agnostic**: uQuery seamlessly handles diverse data formats, making it easy to query and manipulate your files.
 2. **Serverless Deployment**: Deploy uQuery effortlessly on platforms like **AWS Lambda** or **Google Cloud Functions**. No infrastructure headaches—just focus on your data!
