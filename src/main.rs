@@ -19,7 +19,9 @@ use tokio::time::Instant;
 use tokio_util::io::{ReaderStream, SyncIoBridge};
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
-use tracing::info;
+use tracing::{debug, info};
+
+mod cli;
 
 const CONTENT_TYPE_CSV:&str = "text/csv";
 const CONTENT_TYPE_JSON:&str = "application/json";
@@ -60,13 +62,15 @@ impl UQueryState {
 
 #[tokio::main]
 async fn main() {
+    let cli_options = cli::parse();
     let start = Instant::now();
-    tracing_subscriber::fmt::init();
 
+    let addr = format!("{}:{}", cli_options.addr, cli_options.port);
     let conn = Connection::open_in_memory().unwrap();
     let state = Arc::new(UQueryState{duckdb_connection:Mutex::new(conn)});
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     info!("uQuery server started in {:?}",start.elapsed());
+    debug!("listening on {}",addr);
     axum::serve(listener, app(state)).await.unwrap();
 }
 
