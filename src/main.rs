@@ -98,10 +98,11 @@ async fn query(State(state): State<Arc<UQueryState>>, headers: HeaderMap, Json(p
     let reader_stream = ReaderStream::new(rx);
     spawn_blocking(move || {
         let bridge = SyncIoBridge::new(tx);
+        let query_start = Instant::now();
         let conn = state.get_new_connection();
         let mut statement = conn.prepare(payload.query.as_str()).unwrap();
         let arrow = statement.query_arrow([]).unwrap();
-
+        debug!("run: [{}] in {:?}",payload.query, query_start.elapsed());
         match format {
             QueryResponseFormat::CSV => {
                 let writer = Writer::new(bridge);
