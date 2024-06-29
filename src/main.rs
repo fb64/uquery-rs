@@ -20,6 +20,7 @@ use tokio_util::io::{ReaderStream, SyncIoBridge};
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tracing::{debug, info};
+use crate::cli::Options;
 
 mod cli;
 
@@ -64,9 +65,11 @@ impl UQueryState {
 async fn main() {
     let cli_options = cli::parse();
     let start = Instant::now();
-
     let addr = format!("{}:{}", cli_options.addr, cli_options.port);
     let conn = Connection::open_in_memory().unwrap();
+    if let Some(query) = cli_options.init_query() {
+        conn.execute(query.as_str(), []).unwrap();
+    }
     let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn) });
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     info!("uQuery server started in {:?}",start.elapsed());
