@@ -23,6 +23,7 @@ cargo install --git https://github.com/fb64/uquery-rs
 ```
 
 ## Usage
+### Command-line
 ```console
 Usage: uquery [OPTIONS]
 
@@ -35,4 +36,10 @@ Options:
   -d, --db-file <DB_FILE>        DuckDB database file to attach and use as default [env: UQ_DB_FILE=]
   -h, --help                     Print help
   -V, --version                  Print version
+```
+
+### Docker
+uQuery docker image is available on [Docker Hub](https://hub.docker.com/r/fb64/uquery)
+```
+docker run fb64/uquery
 ```
