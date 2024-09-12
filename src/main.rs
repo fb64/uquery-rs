@@ -20,7 +20,7 @@ use tokio_util::io::{ReaderStream, SyncIoBridge};
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tracing::{debug, info};
-use crate::cli::Options;
+use crate::cli::UQ_ATTACHED_DB_NAME;
 
 mod cli;
 
@@ -53,11 +53,17 @@ impl Display for QueryResponseFormat {
 
 struct UQueryState {
     duckdb_connection: Mutex<Connection>,
+    attached: bool,
 }
 
 impl UQueryState {
     fn get_new_connection(&self) -> Connection {
-        self.duckdb_connection.try_lock().unwrap().try_clone().unwrap()
+        let new_conn = self.duckdb_connection.try_lock().unwrap().try_clone().unwrap();
+        if self.attached{
+
+            new_conn.execute(format!("USE {UQ_ATTACHED_DB_NAME};").as_str(),[]).unwrap();
+        }
+        new_conn
     }
 }
 
@@ -67,10 +73,10 @@ async fn main() {
     let start = Instant::now();
     let addr = format!("{}:{}", cli_options.addr, cli_options.port);
     let conn = Connection::open_in_memory().unwrap();
-    if let Some(query) = cli_options.init_query() {
-        conn.execute(query.as_str(), []).unwrap();
+    for init_query in cli_options.init_script(){
+        conn.execute(init_query.as_str(), []).unwrap();
     }
-    let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn) });
+    let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn), attached:cli_options.db_file.is_some() });
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     info!("uQuery server started in {:?}",start.elapsed());
     debug!("listening on {}",addr);
@@ -100,6 +106,7 @@ async fn query(State(state): State<Arc<UQueryState>>, headers: HeaderMap, Json(p
         let bridge = SyncIoBridge::new(tx);
         let query_start = Instant::now();
         let conn = state.get_new_connection();
+        //conn.execute("USE uquery;", []).unwrap();
         let mut statement = conn.prepare(payload.query.as_str()).unwrap();
         let arrow = statement.query_arrow([]).unwrap();
         debug!("run: [{}] in {:?}",payload.query, query_start.elapsed());
@@ -150,11 +157,14 @@ mod tests {
     use polars::error::PolarsError;
     use polars_io::ipc::IpcStreamReader;
     use polars_io::SerReader;
+    use serde_json::Value;
     use tower::ServiceExt;
 
     use crate::{app, QueryRequest, QueryResponseFormat, UQueryState};
+    use crate::cli::UQ_ATTACHED_DB_NAME;
 
     const TEST_QUERY: &str = "SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)";
+    const TEST_QUERY_ATTACHED: &str = "SELECT * from language order by id";
 
     #[tokio::test]
     async fn query_json_test() {
@@ -208,6 +218,32 @@ mod tests {
         assert_eq!(result[1], 0x8bu8);
     }
 
+    #[tokio::test]
+    async fn query_attached_db_test() {
+        let request = QueryRequest { query: TEST_QUERY_ATTACHED.to_string() };
+        let json = serde_json::to_string(&request).unwrap();
+
+        let builder = Request::builder()
+            .method(http::Method::POST)
+            .uri("/")
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, QueryResponseFormat::JSON.to_string());
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(format!("ATTACH 'tests/test.db' as {UQ_ATTACHED_DB_NAME};").as_str(), []).unwrap();
+        let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn), attached: true });
+        let response = app(state).oneshot(
+            builder.body(Body::from(json)).unwrap()
+        ).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let result = read_response(response).await;
+        let response_string = from_utf8(&*result).unwrap();
+        let json_array:Vec<Value> = serde_json::from_str(response_string).unwrap();
+        assert_eq!(json_array.len(),10);
+        assert_eq!(json_array[0].get("id").unwrap().as_i64().unwrap(),1);
+        assert_eq!(json_array[0].get("name").unwrap().as_str().unwrap(),"Rust");
+    }
+
     async fn perform_request(request: QueryRequest, format: QueryResponseFormat) -> Response {
         perform_request_compress(request, format, false).await
     }
@@ -224,7 +260,7 @@ mod tests {
             builder = builder.header(ACCEPT_ENCODING, "gzip");
         }
         let conn = Connection::open_in_memory().unwrap();
-        let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn) });
+        let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn), attached: false });
         app(state).oneshot(
             builder.body(Body::from(json)).unwrap()
         ).await.unwrap()
