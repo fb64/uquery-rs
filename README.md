@@ -1,5 +1,5 @@
 <p style="text-align: center;">
-  <a href="https://github.com/duckdb/duckdb/actions"><img src="https://github.com/fb64/uquery-rs/actions/workflows/ci.yml/badge.svg?branch=main" alt="Github Actions Badge"></a>
+  <a href="https://github.com/fb64/uquery-rs/actions"><img src="https://github.com/fb64/uquery-rs/actions/workflows/ci.yml/badge.svg?branch=main" alt="Github Actions Badge"></a>
 </p>
 
 # uQuery
