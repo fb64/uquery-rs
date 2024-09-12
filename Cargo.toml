@@ -1,6 +1,6 @@
 [package]
 name = "uquery"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -16,7 +16,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 tower = "*"
 tower-http = { version = "*", features = ["compression-gzip"]}
-clap = { version = "4.5.7", features = ["derive","env"] }
+clap = { version = "4.5", features = ["derive","env"] }
 
 [dev-dependencies]
 polars = { version = "0.40.0"}
