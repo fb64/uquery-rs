@@ -29,6 +29,10 @@ pub struct Options {
     /// DuckDB database file to attach in read only mode and use as default
     #[arg(short, long, env="UQ_DB_FILE")]
     pub db_file: Option<String>,
+
+    /// Enabled permissive CORS
+    #[arg(short, long, env="UQ_CORS_ENABLED")]
+    pub cors_enabled: bool,
 }
 
 impl Options{
@@ -77,6 +81,7 @@ mod tests {
             gcs_key_id: None,
             gcs_secret: None,
             db_file: None,
+            cors_enabled: false,
         };
         assert!(options.init_script().is_empty())
     }
@@ -89,6 +94,7 @@ mod tests {
             gcs_key_id: Some("key_id".to_string()),
             gcs_secret:Some("secret".to_string()),
             db_file: None,
+            cors_enabled: false,
         };
         assert_eq!(options.init_script()[0], "CREATE SECRET( TYPE GCS, KEY_ID 'key_id', SECRET 'secret');");
     }

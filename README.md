@@ -25,6 +25,7 @@ cargo install --git https://github.com/fb64/uquery-rs
 ## Usage
 ### Command-line
 ```console
+$uquery -h
 Usage: uquery [OPTIONS]
 
 Options:
@@ -33,7 +34,8 @@ Options:
   -v, --verbose...               Verbose mode
       --gcs-key-id <GCS_KEY_ID>  Google Clous Storage Key ID [env: UQ_GCS_KEY_ID=]
       --gcs-secret <GCS_SECRET>  Google Clous Storage Secret [env: UQ_GCS_SECRET=]
-  -d, --db-file <DB_FILE>        DuckDB database file to attach and use as default [env: UQ_DB_FILE=]
+  -d, --db-file <DB_FILE>        DuckDB database file to attach in read only mode and use as default [env: UQ_DB_FILE=]
+  -c, --cors-enabled             Enabled permissive CORS [env: UQ_CORS_ENABLED=]
   -h, --help                     Print help
   -V, --version                  Print version
 ```

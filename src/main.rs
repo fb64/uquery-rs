@@ -19,6 +19,7 @@ use tokio::time::Instant;
 use tokio_util::io::{ReaderStream, SyncIoBridge};
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
+use tower_http::cors::CorsLayer;
 use tracing::{debug, info};
 use crate::cli::UQ_ATTACHED_DB_NAME;
 
@@ -80,12 +81,19 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     info!("uQuery server started in {:?}",start.elapsed());
     debug!("listening on {}",addr);
-    axum::serve(listener, app(state)).await.unwrap();
+    axum::serve(listener, app(state,cli_options.cors_enabled)).await.unwrap();
 }
 
-fn app(state: Arc<UQueryState>) -> Router {
-    Router::new().route("/", post(query)).with_state(state)
-        .layer(ServiceBuilder::new().layer(CompressionLayer::new()))
+fn app(state: Arc<UQueryState>, cors_enabled: bool) -> Router {
+    let router = Router::new().route("/", post(query)).with_state(state)
+        .layer(ServiceBuilder::new().layer(CompressionLayer::new()));
+    if cors_enabled {
+        router.layer(CorsLayer::permissive())
+    }else {
+        router
+    }
+
+
 }
 
 async fn query(State(state): State<Arc<UQueryState>>, headers: HeaderMap, Json(payload): Json<QueryRequest>) -> Result<Response, StatusCode> {
@@ -150,7 +158,7 @@ mod tests {
     use axum::body::Body;
     use axum::http;
     use axum::http::{Request, StatusCode};
-    use axum::http::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE};
+    use axum::http::header::{ACCEPT, ACCEPT_ENCODING, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_ENCODING, CONTENT_TYPE, ORIGIN};
     use axum::response::Response;
     use duckdb::Connection;
     use futures_util::StreamExt;
@@ -198,9 +206,6 @@ mod tests {
         assert_eq!(name, "Rust");
         assert_eq!(description, "Safe, concurrent, performant systems language");
         Ok(())
-
-
-        //assert_eq!(from_utf8(&*result).unwrap(),"{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}\n");
     }
 
 
@@ -232,7 +237,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute(format!("ATTACH 'tests/test.db' as {UQ_ATTACHED_DB_NAME};").as_str(), []).unwrap();
         let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn), attached: true });
-        let response = app(state).oneshot(
+        let response = app(state,false).oneshot(
             builder.body(Body::from(json)).unwrap()
         ).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -242,6 +247,24 @@ mod tests {
         assert_eq!(json_array.len(),10);
         assert_eq!(json_array[0].get("id").unwrap().as_i64().unwrap(),1);
         assert_eq!(json_array[0].get("name").unwrap().as_str().unwrap(),"Rust");
+    }
+
+    #[tokio::test]
+    async fn cors_enabled_test() {
+        let builder = Request::builder()
+            .method(http::Method::OPTIONS)
+            .uri("/")
+            .header(ACCESS_CONTROL_ALLOW_METHODS, "POST")
+            .header(ORIGIN,"https://origin.com");
+
+        let conn = Connection::open_in_memory().unwrap();
+        let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn), attached: false });
+        let response = app(state,true).oneshot(
+            builder.body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(), "*");
+        assert_eq!(response.headers().get(ACCESS_CONTROL_ALLOW_METHODS).unwrap(), "*");
     }
 
     async fn perform_request(request: QueryRequest, format: QueryResponseFormat) -> Response {
@@ -261,7 +284,7 @@ mod tests {
         }
         let conn = Connection::open_in_memory().unwrap();
         let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn), attached: false });
-        app(state).oneshot(
+        app(state,false).oneshot(
             builder.body(Body::from(json)).unwrap()
         ).await.unwrap()
     }
