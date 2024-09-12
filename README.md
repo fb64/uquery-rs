@@ -2,8 +2,6 @@
   <a href="https://github.com/duckdb/duckdb/actions"><img src="https://github.com/fb64/uquery-rs/actions/workflows/ci.yml/badge.svg?branch=main" alt="Github Actions Badge"></a>
 </p>
 
-:warning: this project is under development and not production ready ! :warning:
-
 # uQuery
 
 **uQuery** (micro query) is a lightweight data querying solution designed for various file formats, including CSV, JSON, and Parquet. Developed in **Rust**, this micro-sized project harnesses the power of [DuckDB](https://duckdb.org/). Here’s a quick overview:
@@ -15,3 +13,26 @@
 
 In summary, **uQuery** empowers data enthusiasts to work with legacy files efficiently, all while embracing  microservice & serverless approach. Dive into the world of uQuery and unlock seamless data exploration! :rocket:
 
+## Installation
+
+[Rust toolchain](https://www.rust-lang.org/tools/install) must be installed
+
+Install with cargo:
+```console
+cargo install --git https://github.com/fb64/uquery-rs
+```
+
+## Usage
+```console
+Usage: uquery [OPTIONS]
+
+Options:
+  -p, --port <PORT>              Port to listen on [env: UQ_PORT=] [default: 8080]
+  -a, --addr <ADDR>              Address to listen on [env: UQ_ADDR=] [default: 0.0.0.0]
+  -v, --verbose...               Verbose mode
+      --gcs-key-id <GCS_KEY_ID>  Google Clous Storage Key ID [env: UQ_GCS_KEY_ID=]
+      --gcs-secret <GCS_SECRET>  Google Clous Storage Secret [env: UQ_GCS_SECRET=]
+  -d, --db-file <DB_FILE>        DuckDB database file to attach and use as default [env: UQ_DB_FILE=]
+  -h, --help                     Print help
+  -V, --version                  Print version
+```
