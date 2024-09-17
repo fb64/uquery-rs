@@ -1,11 +1,28 @@
 name: uQuery docker
 
-on: "workflow_dispatch"
+on:
+  - "workflow_dispatch"
+  - push:
+    - tags:
+      - "v*.*.*"
 
 jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            fb64/uquery
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -27,4 +44,5 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: fb64/uquery:latest
+          tags: :${{ steps.meta.outputs.tags }}
+          labels:

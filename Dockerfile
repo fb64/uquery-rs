@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y curl unzip
 RUN if [ "$TARGETPLATFORM" = "linux/amd64" ]; then ARCHITECTURE=amd64; elif [ "$TARGETPLATFORM" = "linux/arm64" ]; then ARCHITECTURE=aarch64; else ARCHITECTURE=amd64; fi \
     && curl -sS -L -O --output-dir /tmp/ --create-dirs "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-${ARCHITECTURE}.zip" \
     && unzip /tmp/duckdb_cli-linux-${ARCHITECTURE}.zip -d /usr/bin \
-    && duckdb :memory 'INSTALL HTTPFS'
+    && duckdb :memory 'INSTALL HTTPFS' \
+    && rm -f /tmp/duckdb_cli-linux-${ARCHITECTURE}.zip /usr/bin/duckdb
 
 EXPOSE 8080
 COPY --from=builder /build/target/release/uquery /usr/local/bin/uquery
