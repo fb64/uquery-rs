@@ -1,9 +1,9 @@
 name: uQuery docker
 
 on:
-  - "workflow_dispatch"
-  - push:
-    - tags:
+  workflow_dispatch:
+  push:
+    tags:
       - "v*.*.*"
 
 jobs:
