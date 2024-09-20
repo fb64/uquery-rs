@@ -1,17 +1,19 @@
 use std::fmt::Display;
 use std::sync::{Arc, Mutex};
 
+use crate::cli::UQ_ATTACHED_DB_NAME;
+use crate::error::UQueryError;
 use arrow::array::RecordBatchWriter;
 use arrow::csv::Writer;
 use arrow::ipc::writer::StreamWriter;
 use arrow::json::ArrayWriter;
-use axum::{Json, Router};
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
 use axum::http::header::{ACCEPT, CONTENT_TYPE};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::post;
+use axum::{Json, Router};
 use duckdb::{Arrow, Connection};
 use serde::{Deserialize, Serialize};
 use tokio::task::spawn_blocking;
@@ -21,9 +23,9 @@ use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tracing::{debug, info};
-use crate::cli::UQ_ATTACHED_DB_NAME;
 
 mod cli;
+mod error;
 
 const CONTENT_TYPE_CSV: &str = "text/csv";
 const CONTENT_TYPE_JSON: &str = "application/json";
@@ -96,13 +98,17 @@ fn app(state: Arc<UQueryState>, cors_enabled: bool) -> Router {
 
 }
 
-async fn query(State(state): State<Arc<UQueryState>>, headers: HeaderMap, Json(payload): Json<QueryRequest>) -> Result<Response, StatusCode> {
+async fn query(State(state): State<Arc<UQueryState>>, headers: HeaderMap, Json(payload): Json<QueryRequest>) -> Result<Response, UQueryError> {
     let format = match headers.get(ACCEPT).unwrap().to_str().unwrap().to_lowercase().as_str() {
         CONTENT_TYPE_JSON => { Ok(QueryResponseFormat::JSON) }
         CONTENT_TYPE_CSV => { Ok(QueryResponseFormat::CSV) }
         CONTENT_TYPE_ARROW => { Ok(QueryResponseFormat::ARROW) }
-        _ => {
-            Err(StatusCode::NOT_ACCEPTABLE)
+        other => {
+            Err(UQueryError {
+                status_code: StatusCode::NOT_ACCEPTABLE,
+                title: "Unsupported response format".to_string(),
+                detail: format!("format [{}] is not supported", other),
+            })
         }
     }?;
 
@@ -110,35 +116,56 @@ async fn query(State(state): State<Arc<UQueryState>>, headers: HeaderMap, Json(p
 
     let (tx, rx) = tokio::io::duplex(65_536);
     let reader_stream = ReaderStream::new(rx);
+    let (result_sender, result_receiver) = tokio::sync::oneshot::channel();
+
     spawn_blocking(move || {
         let bridge = SyncIoBridge::new(tx);
         let query_start = Instant::now();
         let conn = state.get_new_connection();
-        //conn.execute("USE uquery;", []).unwrap();
-        let mut statement = conn.prepare(payload.query.as_str()).unwrap();
-        let arrow = statement.query_arrow([]).unwrap();
-        debug!("run: [{}] in {:?}",payload.query, query_start.elapsed());
-        match format {
-            QueryResponseFormat::CSV => {
-                let writer = Writer::new(bridge);
-                handle_response_write(writer, arrow);
+
+        match conn.prepare(payload.query.as_str()){
+            Ok(mut statement) => {
+                match statement.query_arrow([]) {
+                    Ok(arrow) => {
+                        debug!("run: [{}] in {:?}",payload.query, query_start.elapsed());
+                        let _ = result_sender.send(Ok::<(), String>(()));
+                        match format {
+                            QueryResponseFormat::CSV => {
+                                let writer = Writer::new(bridge);
+                                handle_response_write(writer, arrow);
+                            }
+                            QueryResponseFormat::JSON => {
+                                let writer = ArrayWriter::new(bridge);
+                                handle_response_write(writer, arrow);
+                            }
+                            QueryResponseFormat::ARROW => {
+                                let writer = StreamWriter::try_new(bridge, &*arrow.get_schema()).unwrap();
+                                handle_response_write(writer, arrow);
+                            }
+                        };
+                    }
+                    Err(err) => {
+                        let _ = result_sender.send(Err(err.to_string()));
+                    }
+                }
+            }Err(err) =>{
+                let _ = result_sender.send(Err(err.to_string()));
             }
-            QueryResponseFormat::JSON => {
-                let writer = ArrayWriter::new(bridge);
-                handle_response_write(writer, arrow);
-            }
-            QueryResponseFormat::ARROW => {
-                let writer = StreamWriter::try_new(bridge, &*arrow.get_schema()).unwrap();
-                handle_response_write(writer, arrow);
-            }
-        };
+        }
     });
 
-    Ok(axum::response::Response::builder()
-        .status(StatusCode::OK)
-        .header(CONTENT_TYPE, content_type)
-        .body(Body::from_stream(reader_stream))
-        .unwrap())
+    match result_receiver.await.unwrap() {
+        Ok(_) => Ok(axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, content_type)
+            .body(Body::from_stream(reader_stream))
+            .unwrap()),
+        Err(err) => Err(UQueryError {
+            status_code: StatusCode::BAD_REQUEST,
+            title: "SQL Error".to_string(),
+            detail: err,
+        })
+    }
 }
 
 fn handle_response_write<W: RecordBatchWriter>(mut writer: W, data: Arrow) {
@@ -151,14 +178,10 @@ fn handle_response_write<W: RecordBatchWriter>(mut writer: W, data: Arrow) {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-    use std::str::from_utf8;
-    use std::sync::{Arc, Mutex};
-
     use axum::body::Body;
     use axum::http;
-    use axum::http::{Request, StatusCode};
     use axum::http::header::{ACCEPT, ACCEPT_ENCODING, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_ENCODING, CONTENT_TYPE, ORIGIN};
+    use axum::http::{Request, StatusCode};
     use axum::response::Response;
     use duckdb::Connection;
     use futures_util::StreamExt;
@@ -166,10 +189,13 @@ mod tests {
     use polars_io::ipc::IpcStreamReader;
     use polars_io::SerReader;
     use serde_json::Value;
+    use std::io::Cursor;
+    use std::str::from_utf8;
+    use std::sync::{Arc, Mutex};
     use tower::ServiceExt;
 
-    use crate::{app, QueryRequest, QueryResponseFormat, UQueryState};
     use crate::cli::UQ_ATTACHED_DB_NAME;
+    use crate::{app, QueryRequest, QueryResponseFormat, UQueryState};
 
     const TEST_QUERY: &str = "SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)";
     const TEST_QUERY_ATTACHED: &str = "SELECT * from language order by id";
@@ -265,6 +291,17 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(), "*");
         assert_eq!(response.headers().get(ACCESS_CONTROL_ALLOW_METHODS).unwrap(), "*");
+    }
+
+    #[tokio::test]
+    async fn query_sql_error_test() {
+        let response = perform_request(QueryRequest { query: "bad command".to_string() }, QueryResponseFormat::JSON).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let result = read_response(response).await;
+        let error: Value = serde_json::from_str(from_utf8(&*result).unwrap()).unwrap();
+        assert_eq!(error["status"].as_u64().unwrap(),400);
+        assert_eq!(error["title"],"SQL Error");
+        assert!(!error["detail"].to_string().is_empty());
     }
 
     async fn perform_request(request: QueryRequest, format: QueryResponseFormat) -> Response {
