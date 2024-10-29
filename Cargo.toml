@@ -1,17 +1,17 @@
 [package]
 name = "uquery"
-    version = "0.3.0"
+version = "0.3.2"
 edition = "2021"
 
 [dependencies]
-axum = { version = "0.7.5" }
-tokio = {version="1.37.0",features = ["full"] }
+axum = { version = "0.7" }
+tokio = {version="1.41",features = ["full"] }
 tokio-util = { version = "*",features = ["io","io-util"] }
-serde = { version = "1.0.202", features = ["derive"] }
-duckdb = { version = "1.0.0", features = ["bundled"] }
-arrow = {version = "52", features = ["arrow-json","arrow-csv","arrow-ipc","chrono-tz"]}
-serde_json = "1.0.117"
-futures-util = "0.3.30"
+serde = { version = "1.0", features = ["derive"] }
+duckdb = { version = "1.1.1", features = ["bundled"] }
+arrow = {version = "53", features = ["arrow-json","arrow-csv","arrow-ipc","chrono-tz"]}
+serde_json = "1.0"
+futures-util = "0.3"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 tower = "*"
@@ -19,6 +19,6 @@ tower-http = { version = "*", features = ["compression-gzip","cors"]}
 clap = { version = "4.5", features = ["derive","env"] }
 
 [dev-dependencies]
-polars = { version = "0.40.0"}
-polars-core = { version = "0.40.0" }
-polars-io = { version = "0.40.0",features = ["ipc_streaming","json"]}
+polars = { version = "0.44"}
+polars-core = { version = "0.44" }
+polars-io = { version = "0.44",features = ["ipc_streaming","json"]}
