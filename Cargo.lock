@@ -4031,7 +4031,6 @@ dependencies = [
  "duckdb",
  "futures-util",
  "polars",
- "polars-core",
  "polars-io",
  "serde",
  "serde_json",

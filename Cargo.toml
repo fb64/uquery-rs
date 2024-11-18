@@ -20,5 +20,4 @@ clap = { version = "4.5", features = ["derive","env"] }
 
 [dev-dependencies]
 polars = { version = "0.44"}
-polars-core = { version = "0.44" }
 polars-io = { version = "0.44",features = ["ipc_streaming","json"]}
