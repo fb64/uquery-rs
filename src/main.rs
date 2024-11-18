@@ -16,6 +16,7 @@ use axum::routing::post;
 use axum::{Json, Router};
 use duckdb::{Arrow, Connection};
 use serde::{Deserialize, Serialize};
+use tokio::signal;
 use tokio::task::spawn_blocking;
 use tokio::time::Instant;
 use tokio_util::io::{ReaderStream, SyncIoBridge};
@@ -83,7 +84,9 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     info!("uQuery server started in {:?}",start.elapsed());
     debug!("listening on {}",addr);
-    axum::serve(listener, app(state,cli_options.cors_enabled)).await.unwrap();
+    axum::serve(listener, app(state,cli_options.cors_enabled))
+        .with_graceful_shutdown(shutdown_signal())
+        .await.unwrap();
 }
 
 fn app(state: Arc<UQueryState>, cors_enabled: bool) -> Router {
@@ -173,6 +176,32 @@ fn handle_response_write<W: RecordBatchWriter>(mut writer: W, data: Arrow) {
         writer.write(&rb).unwrap();
     }
     writer.close().unwrap();
+}
+
+async fn shutdown_signal(){
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    debug!("Shutting down uQuery server");
 }
 
 
