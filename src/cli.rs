@@ -1,6 +1,7 @@
 use clap::Parser;
 
 pub const UQ_ATTACHED_DB_NAME: &str = "uquery_attached_db";
+pub const UQ_CREATE_AWS_CREDENTIAL_CHAIN: &str = "CREATE SECRET aws_secret ( TYPE S3, PROVIDER CREDENTIAL_CHAIN);";
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -33,6 +34,10 @@ pub struct Options {
     /// Enabled permissive CORS
     #[arg(short, long, env="UQ_CORS_ENABLED")]
     pub cors_enabled: bool,
+
+    /// Enable AWS Credential Chain
+    #[arg(long, env="UQ_AWS_CREDENTIAL_CHAIN")]
+    pub aws_credential_chain: bool,
 }
 
 impl Options{
@@ -43,7 +48,11 @@ impl Options{
         let mut init_script = Vec::new();
 
         if let (Some(key), Some(secret)) = (key_opt, secret_opt){
-            init_script.push(format!("CREATE SECRET( TYPE GCS, KEY_ID '{key}', SECRET '{secret}');"));
+            init_script.push(format!("CREATE SECRET gcs_secret ( TYPE GCS, KEY_ID '{key}', SECRET '{secret}');"));
+        }
+
+        if self.aws_credential_chain{
+            init_script.push(UQ_CREATE_AWS_CREDENTIAL_CHAIN.to_string());
         }
 
         if let Some(db_file) = db_file_opt{
@@ -82,6 +91,7 @@ mod tests {
             gcs_secret: None,
             db_file: None,
             cors_enabled: false,
+            aws_credential_chain: false
         };
         assert!(options.init_script().is_empty())
     }
@@ -95,7 +105,37 @@ mod tests {
             gcs_secret:Some("secret".to_string()),
             db_file: None,
             cors_enabled: false,
+            aws_credential_chain: false
         };
-        assert_eq!(options.init_script()[0], "CREATE SECRET( TYPE GCS, KEY_ID 'key_id', SECRET 'secret');");
+        assert_eq!(options.init_script()[0], "CREATE SECRET gcs_secret ( TYPE GCS, KEY_ID 'key_id', SECRET 'secret');");
+    }
+
+    #[test]
+    fn init_query_aws() {
+        let options : Options = Options{
+            port: 8080, addr: "".to_string(),
+            verbose: 3,
+            gcs_key_id: None,
+            gcs_secret:None,
+            db_file: None,
+            cors_enabled: false,
+            aws_credential_chain: true
+        };
+        assert_eq!(options.init_script()[0], UQ_CREATE_AWS_CREDENTIAL_CHAIN);
+    }
+
+    #[test]
+    fn init_query_asw_gcs() {
+        let options : Options = Options{
+            port: 8080, addr: "".to_string(),
+            verbose: 3,
+            gcs_key_id: Some("key_id2".to_string()),
+            gcs_secret:Some("secret2".to_string()),
+            db_file: None,
+            cors_enabled: false,
+            aws_credential_chain: true
+        };
+        assert_eq!(options.init_script()[0], "CREATE SECRET gcs_secret ( TYPE GCS, KEY_ID 'key_id2', SECRET 'secret2');");
+        assert_eq!(options.init_script()[1], UQ_CREATE_AWS_CREDENTIAL_CHAIN);
     }
 }
