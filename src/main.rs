@@ -31,6 +31,7 @@ mod error;
 const CONTENT_TYPE_CSV: &str = "text/csv";
 const CONTENT_TYPE_JSON: &str = "application/json";
 const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
+const CONTENT_TYPE_ANY: &str = "*/*";
 
 #[derive(Deserialize, Serialize)]
 struct QueryRequest {
@@ -102,21 +103,14 @@ fn app(state: Arc<UQueryState>, cors_enabled: bool) -> Router {
 }
 
 async fn query(State(state): State<Arc<UQueryState>>, headers: HeaderMap, Json(payload): Json<QueryRequest>) -> Result<Response, UQueryError> {
-    let format = match headers.get(ACCEPT).unwrap().to_str().unwrap().to_lowercase().as_str() {
-        CONTENT_TYPE_JSON => { Ok(QueryResponseFormat::JSON) }
-        CONTENT_TYPE_CSV => { Ok(QueryResponseFormat::CSV) }
-        CONTENT_TYPE_ARROW => { Ok(QueryResponseFormat::ARROW) }
-        other => {
-            Err(UQueryError {
-                status_code: StatusCode::NOT_ACCEPTABLE,
-                title: "Unsupported response format".to_string(),
-                detail: format!("format [{}] is not supported", other),
-            })
-        }
-    }?;
+
+    let format = get_first_compatible_format(&headers).ok_or_else(||UQueryError {
+        status_code: StatusCode::NOT_ACCEPTABLE,
+        title: "Unsupported response format".to_string(),
+        detail: format!("format [{}] is not supported", headers.get(ACCEPT).unwrap().to_str().unwrap().to_lowercase().as_str()),
+    })?;
 
     let content_type = format.to_string();
-
     let (tx, rx) = tokio::io::duplex(65_536);
     let reader_stream = ReaderStream::new(rx);
     let (result_sender, result_receiver) = tokio::sync::oneshot::channel();
@@ -178,6 +172,19 @@ fn handle_response_write<W: RecordBatchWriter>(mut writer: W, data: Arrow) {
     writer.close().unwrap();
 }
 
+fn get_first_compatible_format(headers: &HeaderMap) -> Option<QueryResponseFormat> {
+    let accept_value = headers.get(ACCEPT)?.to_str().unwrap().to_lowercase();
+    for format in accept_value.split(",").collect::<Vec<&str>>(){
+        match format {
+            CONTENT_TYPE_JSON | CONTENT_TYPE_ANY => { return Some(QueryResponseFormat::JSON) }
+            CONTENT_TYPE_CSV => { return Some(QueryResponseFormat::CSV) }
+            CONTENT_TYPE_ARROW => { return Some(QueryResponseFormat::ARROW) }
+            _ => {}
+        };
+    }
+    None
+}
+
 async fn shutdown_signal(){
     let ctrl_c = async {
         signal::ctrl_c()
@@ -210,7 +217,7 @@ mod tests {
     use axum::body::Body;
     use axum::http;
     use axum::http::header::{ACCEPT, ACCEPT_ENCODING, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_ENCODING, CONTENT_TYPE, ORIGIN};
-    use axum::http::{Request, StatusCode};
+    use axum::http::{HeaderMap, Request, StatusCode};
     use axum::response::Response;
     use duckdb::Connection;
     use futures_util::StreamExt;
@@ -224,7 +231,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::cli::UQ_ATTACHED_DB_NAME;
-    use crate::{app, QueryRequest, QueryResponseFormat, UQueryState};
+    use crate::{app, get_first_compatible_format, QueryRequest, QueryResponseFormat, UQueryState};
 
     const TEST_QUERY: &str = "SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)";
     const TEST_QUERY_ATTACHED: &str = "SELECT * from language order by id";
@@ -331,6 +338,44 @@ mod tests {
         assert_eq!(error["status"].as_u64().unwrap(),400);
         assert_eq!(error["title"],"SQL Error");
         assert!(!error["detail"].to_string().is_empty());
+    }
+
+    #[test]
+    fn content_negotiation_test() {
+        let mut headers = HeaderMap::new();
+        headers.insert(ACCEPT, "application/json,text/html".parse().unwrap());
+        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::JSON)));
+
+        headers.remove(ACCEPT);
+        headers.insert(ACCEPT, "application/json".parse().unwrap());
+        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::JSON)));
+
+        headers.remove(ACCEPT);
+        headers.insert(ACCEPT, "text/csv".parse().unwrap());
+        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::CSV)));
+
+        headers.remove(ACCEPT);
+        headers.insert(ACCEPT, "application/vnd.apache.arrow.stream".parse().unwrap());
+        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::ARROW)));
+
+        headers.remove(ACCEPT);
+        headers.insert(ACCEPT, "application/json,text/csv".parse().unwrap());
+        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::JSON)));
+
+        headers.remove(ACCEPT);
+        headers.insert(ACCEPT, "application/xml,application/vnd.apache.arrow.stream".parse().unwrap());
+        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::ARROW)));
+
+        headers.remove(ACCEPT);
+        headers.insert(ACCEPT, "text/html,application/xml".parse().unwrap());
+        assert!(matches!(get_first_compatible_format(&headers), None));
+
+        headers.remove(ACCEPT);
+        headers.insert(ACCEPT, "*/*".parse().unwrap());
+        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::JSON)));
+
+        headers.remove(ACCEPT);
+        assert!(matches!(get_first_compatible_format(&headers), None));
     }
 
     async fn perform_request(request: QueryRequest, format: QueryResponseFormat) -> Response {
