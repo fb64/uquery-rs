@@ -32,8 +32,8 @@ export default function Home(): JSX.Element {
   const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
-      title={`Hello from ${siteConfig.title}`}
-      description="Description will go into a meta tag in <head />">
+      title={`${siteConfig.title} Documentation`}
+      description="µQuery (micro query) is a lightweight data querying solution designed for various file formats, including CSV, JSON, and Parquet.">
       <HomepageHeader />
       <main>
         <HomepageFeatures />
