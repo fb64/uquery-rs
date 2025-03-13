@@ -120,7 +120,8 @@ async fn query(State(state): State<Arc<UQueryState>>, headers: HeaderMap, Json(p
         let query_start = Instant::now();
         let conn = state.get_new_connection();
 
-        match conn.prepare(payload.query.as_str()){
+        let statement = conn.prepare(payload.query.as_str());
+        match statement{
             Ok(mut statement) => {
                 match statement.query_arrow([]) {
                     Ok(arrow) => {
@@ -151,7 +152,8 @@ async fn query(State(state): State<Arc<UQueryState>>, headers: HeaderMap, Json(p
         }
     });
 
-    match result_receiver.await.unwrap() {
+    let result = result_receiver.await.unwrap();
+    match result {
         Ok(_) => Ok(axum::response::Response::builder()
             .status(StatusCode::OK)
             .header(CONTENT_TYPE, content_type)
@@ -220,7 +222,7 @@ mod tests {
     use axum::http::{HeaderMap, Request, StatusCode};
     use axum::response::Response;
     use duckdb::Connection;
-    use futures_util::StreamExt;
+    use futures_util::TryStreamExt;
     use polars::error::PolarsError;
     use polars_io::ipc::IpcStreamReader;
     use polars_io::SerReader;
@@ -401,18 +403,14 @@ mod tests {
     }
 
     async fn read_response(response: Response) -> Vec<u8> {
-        let mut stream = response.into_body().into_data_stream();
-        let mut result = Vec::new();
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(bytes) => {
-                    for b in bytes {
-                        result.push(b)
-                    }
-                }
-                Err(e) => eprintln!("Error: {}", e),
-            };
-        }
-        result
+        response.into_body().into_data_stream()
+            .map_ok(|bytes| bytes.to_vec())
+            .try_fold(Vec::new(), |mut acc, item|{
+                acc.extend_from_slice(&item);
+                async move { Ok(acc) }
+            }).await.unwrap_or_else(|e| {
+            eprintln!("Error: {}", e);
+            Vec::new()
+        })
     }
 }
