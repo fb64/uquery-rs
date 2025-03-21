@@ -236,7 +236,6 @@ mod tests {
     use crate::{app, get_first_compatible_format, QueryRequest, QueryResponseFormat, UQueryState};
 
     const TEST_QUERY: &str = "SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)";
-    const TEST_QUERY_ATTACHED: &str = "SELECT * from language order by id";
 
     #[tokio::test]
     async fn query_json_test() {
@@ -289,7 +288,7 @@ mod tests {
 
     #[tokio::test]
     async fn query_attached_db_test() {
-        let request = QueryRequest { query: TEST_QUERY_ATTACHED.to_string() };
+        let request = QueryRequest { query: "SELECT * from language order by id".to_string() };
         let json = serde_json::to_string(&request).unwrap();
 
         let builder = Request::builder()
@@ -378,6 +377,92 @@ mod tests {
 
         headers.remove(ACCEPT);
         assert!(matches!(get_first_compatible_format(&headers), None));
+    }
+
+    #[tokio::test]
+    async fn read_csv_test() {
+        let response = perform_request(
+            QueryRequest { query: "select * from read_csv('tests/test.csv')".to_string() },
+            QueryResponseFormat::JSON
+        ).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let result = read_response(response).await;
+        let response_string = from_utf8(&*result).unwrap();
+        let json_array:Vec<Value> = serde_json::from_str(response_string).unwrap();
+        assert_eq!(json_array.len(),2);
+        assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(),"abc");
+        assert_eq!(json_array[0].get("f_int").unwrap().as_i64().unwrap(),123);
+        assert_eq!(json_array[0].get("f_float").unwrap().as_f64().unwrap(),4.56);
+    }
+
+    #[tokio::test]
+    async fn read_parquet_test() {
+        let response = perform_request(
+            QueryRequest { query: "select * from 'tests/test.zstd.parquet'".to_string() },
+            QueryResponseFormat::JSON
+        ).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let result = read_response(response).await;
+        let response_string = from_utf8(&*result).unwrap();
+        let json_array:Vec<Value> = serde_json::from_str(response_string).unwrap();
+
+        assert_eq!(json_array.len(),2);
+        assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(),"abc");
+        assert_eq!(json_array[0].get("f_int").unwrap().as_i64().unwrap(),123);
+        assert_eq!(json_array[0].get("f_float").unwrap().as_f64().unwrap(),4.56);
+    }
+
+    #[tokio::test]
+    async fn read_json_test() {
+        let response = perform_request(
+            QueryRequest { query: "select * from 'tests/test.jsonl'".to_string() },
+            QueryResponseFormat::JSON
+        ).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let result = read_response(response).await;
+        let response_string = from_utf8(&*result).unwrap();
+        let json_array:Vec<Value> = serde_json::from_str(response_string).unwrap();
+        
+        assert_eq!(json_array.len(),2);
+        assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(),"abc");
+        assert_eq!(json_array[0].get("f_int").unwrap().as_i64().unwrap(),123);
+        assert_eq!(json_array[0].get("f_float").unwrap().as_f64().unwrap(),4.56);
+    }
+
+
+    #[tokio::test]
+    /*
+        The following macro table have been created in the tests/test.db DuckDB database file
+        create macro table test() as select * from 'tests/test.zstd.parquet'
+     */
+    async fn query_attached_macro_table_test() {
+        let request = QueryRequest { query: "SELECT * from test()".to_string() };
+        let json = serde_json::to_string(&request).unwrap();
+
+        let builder = Request::builder()
+            .method(http::Method::POST)
+            .uri("/")
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, QueryResponseFormat::JSON.to_string());
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(format!("ATTACH 'tests/test.db' as {UQ_ATTACHED_DB_NAME};").as_str(), []).unwrap();
+        let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn), attached: true });
+        let response = app(state,false).oneshot(
+            builder.body(Body::from(json)).unwrap()
+        ).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let result = read_response(response).await;
+        let response_string = from_utf8(&*result).unwrap();
+        let json_array:Vec<Value> = serde_json::from_str(response_string).unwrap();
+        assert_eq!(json_array.len(),2);
+        assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(),"abc");
+        assert_eq!(json_array[0].get("f_int").unwrap().as_i64().unwrap(),123);
+        assert_eq!(json_array[0].get("f_float").unwrap().as_f64().unwrap(),4.56);
     }
 
     async fn perform_request(request: QueryRequest, format: QueryResponseFormat) -> Response {
