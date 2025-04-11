@@ -7,7 +7,7 @@ RUN cargo build --release
 
 FROM debian:bookworm-slim
 ARG TARGETPLATFORM
-ARG DUCKDB_VERSION="1.2.1"
+ARG DUCKDB_VERSION="1.2.2"
 LABEL org.opencontainers.image.authors="florian@flob.fr"
 LABEL org.opencontainers.image.source="https://github.com/fb64/uquery-rs"
 LABEL org.opencontainers.image.description="A lightweight server that provide a simple API to query good old data files (CSV, Json, Parquet ...) with SQL"

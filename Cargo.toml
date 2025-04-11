@@ -1,6 +1,6 @@
 [package]
 name = "uquery"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 
 [dependencies]
@@ -8,7 +8,7 @@ axum = { version = "0.8" }
 tokio = {version="1.41",features = ["full"] }
 tokio-util = { version = "*",features = ["io","io-util"] }
 serde = { version = "1.0", features = ["derive"] }
-duckdb = { version = "1.2.1", features = ["extensions-full"] }
+duckdb = { version = "1.2.2", features = ["extensions-full"] }
 arrow = {version = "54", features = ["arrow-json","arrow-csv","arrow-ipc","chrono-tz"]}
 serde_json = "1.0"
 futures-util = "0.3"
