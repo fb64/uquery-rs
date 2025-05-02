@@ -6,7 +6,7 @@ use crate::error::UQueryError;
 use arrow::array::RecordBatchWriter;
 use arrow::csv::Writer;
 use arrow::ipc::writer::StreamWriter;
-use arrow::json::ArrayWriter;
+use arrow::json::{ArrayWriter, LineDelimitedWriter};
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::header::{ACCEPT, CONTENT_TYPE};
@@ -30,6 +30,8 @@ mod error;
 
 const CONTENT_TYPE_CSV: &str = "text/csv";
 const CONTENT_TYPE_JSON: &str = "application/json";
+const CONTENT_TYPE_JSONLINES: &str = "application/jsonlines";
+const CONTENT_TYPE_JSONL: &str = "application/jsonl";
 const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
 const CONTENT_TYPE_ANY: &str = "*/*";
 
@@ -42,6 +44,7 @@ enum QueryResponseFormat {
     CSV,
     JSON,
     ARROW,
+    JSONLINES,
 }
 
 impl Display for QueryResponseFormat {
@@ -49,7 +52,8 @@ impl Display for QueryResponseFormat {
         let str = match self {
             QueryResponseFormat::CSV => CONTENT_TYPE_CSV.to_string(),
             QueryResponseFormat::JSON => CONTENT_TYPE_JSON.to_string(),
-            QueryResponseFormat::ARROW => CONTENT_TYPE_ARROW.to_string()
+            QueryResponseFormat::ARROW => CONTENT_TYPE_ARROW.to_string(),
+            QueryResponseFormat::JSONLINES => CONTENT_TYPE_JSONLINES.to_string(),
         };
         write!(f, "{}", str)
     }
@@ -65,7 +69,6 @@ impl UQueryState {
     fn get_new_connection(&self) -> Connection {
         let new_conn = self.duckdb_connection.try_lock().unwrap().try_clone().unwrap();
         if self.attached{
-
             new_conn.execute(format!("USE {UQ_ATTACHED_DB_NAME};").as_str(),[]).unwrap();
         }
         new_conn
@@ -140,6 +143,10 @@ async fn query(State(state): State<Arc<UQueryState>>, headers: HeaderMap, Json(p
                                 let writer = StreamWriter::try_new(bridge, &*arrow.get_schema()).unwrap();
                                 handle_response_write(writer, arrow);
                             }
+                            QueryResponseFormat::JSONLINES=>{
+                                let writer = LineDelimitedWriter::new(bridge);
+                                handle_response_write(writer, arrow);
+                            }
                         };
                     }
                     Err(err) => {
@@ -181,6 +188,7 @@ fn get_first_compatible_format(headers: &HeaderMap) -> Option<QueryResponseForma
             CONTENT_TYPE_JSON | CONTENT_TYPE_ANY => { return Some(QueryResponseFormat::JSON) }
             CONTENT_TYPE_CSV => { return Some(QueryResponseFormat::CSV) }
             CONTENT_TYPE_ARROW => { return Some(QueryResponseFormat::ARROW) }
+            CONTENT_TYPE_JSONLINES | CONTENT_TYPE_JSONL => { return Some(QueryResponseFormat::JSONLINES) }
             _ => {}
         };
     }
@@ -372,6 +380,14 @@ mod tests {
         assert!(matches!(get_first_compatible_format(&headers), None));
 
         headers.remove(ACCEPT);
+        headers.insert(ACCEPT, "application/jsonlines".parse().unwrap());
+        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::JSONLINES)));
+
+        headers.remove(ACCEPT);
+        headers.insert(ACCEPT, "application/jsonl".parse().unwrap());
+        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::JSONLINES)));
+
+        headers.remove(ACCEPT);
         headers.insert(ACCEPT, "*/*".parse().unwrap());
         assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::JSON)));
 
@@ -433,10 +449,28 @@ mod tests {
         assert_eq!(json_array[0].get("f_float").unwrap().as_f64().unwrap(),4.56);
     }
 
+    #[tokio::test]
+    async fn read_jsonlines_test() {
+        let response = perform_request(
+            QueryRequest { query: "select * from 'tests/test.jsonl'".to_string() },
+            QueryResponseFormat::JSONLINES
+        ).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let result = read_response(response).await;
+        let response_string = from_utf8(&*result).unwrap().lines().collect::<Vec<&str>>();
+        let json_first:Value = serde_json::from_str(response_string.get(0).unwrap()).unwrap();
+
+        assert_eq!(response_string.len(),2);
+        assert_eq!(json_first.get("f_str").unwrap().as_str().unwrap(),"abc");
+        assert_eq!(json_first.get("f_int").unwrap().as_i64().unwrap(),123);
+        assert_eq!(json_first.get("f_float").unwrap().as_f64().unwrap(),4.56);
+    }
 
     #[tokio::test]
     /*
-        The following macro table have been created in the tests/test.db DuckDB database file
+        The following macro table has been created in the tests/test.db DuckDB database file
         create macro table test() as select * from 'tests/test.zstd.parquet'
      */
     async fn query_attached_macro_table_test() {
