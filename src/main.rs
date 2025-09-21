@@ -7,6 +7,7 @@ use arrow::array::RecordBatchWriter;
 use arrow::csv::Writer;
 use arrow::ipc::writer::StreamWriter;
 use arrow::json::{ArrayWriter, LineDelimitedWriter};
+use async_trait::async_trait;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::header::{ACCEPT, CONTENT_TYPE};
@@ -15,6 +16,7 @@ use axum::response::Response;
 use axum::routing::post;
 use axum::{Json, Router};
 use duckdb::{Arrow, Connection};
+use pingora::prelude::{HttpPeer, ProxyHttp, RequestHeader, Session, Result, Server, http_proxy_service};
 use serde::{Deserialize, Serialize};
 use tokio::signal;
 use tokio::task::spawn_blocking;
@@ -39,6 +41,8 @@ const CONTENT_TYPE_ANY: &str = "*/*";
 struct QueryRequest {
     query: String,
 }
+
+struct UIProxyService;
 
 enum QueryResponseFormat {
     CSV,
@@ -75,8 +79,7 @@ impl UQueryState {
     }
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let cli_options = cli::parse();
     let start = Instant::now();
     let addr = format!("{}:{}", cli_options.addr, cli_options.port);
@@ -85,12 +88,37 @@ async fn main() {
         conn.execute(init_query.as_str(), []).unwrap();
     }
     let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn), attached:cli_options.db_file.is_some() });
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    info!("uQuery server started in {:?}",start.elapsed());
-    debug!("listening on {}",addr);
-    axum::serve(listener, app(state,cli_options.cors_enabled))
-        .with_graceful_shutdown(shutdown_signal())
-        .await.unwrap();
+
+    let tk_runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    if cli_options.duckdb_ui{
+        tk_runtime.spawn_blocking(move || {
+            start_duckdb_ui_proxy(cli_options.duckdb_ui_port);
+        });
+    }
+
+    tk_runtime.block_on(async {
+            let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+            info!("uQuery server started in {:?}",start.elapsed());
+            debug!("listening on {}",addr);
+            axum::serve(listener, app(state,cli_options.cors_enabled))
+                .with_graceful_shutdown(shutdown_signal())
+                .await.unwrap();
+        });
+}
+
+fn start_duckdb_ui_proxy(ui_port:u16){
+    let mut server = Server::new(None).unwrap();
+    server.bootstrap();
+    let service: UIProxyService = UIProxyService;
+    let mut app = http_proxy_service(&server.configuration, service);
+    app.add_tcp(format!("0.0.0.0:{ui_port}").as_str());
+    server.add_service(app);
+    info!("DuckDB UI Proxy server started on port: {ui_port}");
+    server.run_forever()
 }
 
 fn app(state: Arc<UQueryState>, cors_enabled: bool) -> Router {
@@ -219,6 +247,35 @@ async fn shutdown_signal(){
     }
 
     debug!("Shutting down uQuery server");
+}
+
+#[async_trait]
+impl ProxyHttp for UIProxyService {
+    type CTX = ();
+    fn new_ctx(&self) -> Self::CTX {
+        ()
+    }
+
+    async fn upstream_peer(
+        &self,
+        _session: &mut Session,
+        _ctx: &mut Self::CTX,
+    ) -> Result<Box<HttpPeer>> {
+        let upstream = Box::new(HttpPeer::new("localhost:4213", false, "localhost".to_string()));
+        Ok(upstream)
+    }
+
+    async fn upstream_request_filter(
+        &self,
+        _session: &mut Session,
+        upstream_request: &mut RequestHeader,
+        _ctx: &mut Self::CTX,
+    ) -> Result<()> {
+        upstream_request.insert_header("Host", "localhost").unwrap();
+        upstream_request.insert_header("Referer", "http://localhost:4213/").unwrap();
+        upstream_request.insert_header("Origin", "http://localhost:4213").unwrap();
+        Ok(())
+    }
 }
 
 

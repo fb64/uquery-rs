@@ -1,7 +1,11 @@
 use clap::Parser;
+use tracing::metadata::LevelFilter;
+use tracing_subscriber::EnvFilter;
 
 pub const UQ_ATTACHED_DB_NAME: &str = "uquery_attached_db";
-pub const UQ_CREATE_AWS_CREDENTIAL_CHAIN: &str = "CREATE SECRET aws_secret ( TYPE S3, PROVIDER CREDENTIAL_CHAIN);";
+const UQ_CREATE_AWS_CREDENTIAL_CHAIN: &str = "CREATE SECRET aws_secret ( TYPE S3, PROVIDER CREDENTIAL_CHAIN);";
+const UQ_START_UI_SERVER: &str = "CALL start_ui_server();";
+
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -38,6 +42,14 @@ pub struct Options {
     /// Enable AWS Credential Chain
     #[arg(long, env="UQ_AWS_CREDENTIAL_CHAIN")]
     pub aws_credential_chain: bool,
+
+    /// Enable DuckDB UI Proxy
+    #[arg(long, env="UQ_UI_PROXY")]
+    pub duckdb_ui: bool,
+
+    /// DuckDB UI Port
+    #[arg(default_value="14213",long, env="UQ_UI_PORT")]
+    pub duckdb_ui_port: u16,
 }
 
 impl Options{
@@ -59,6 +71,10 @@ impl Options{
             init_script.push(format!("ATTACH '{db_file}' as {UQ_ATTACHED_DB_NAME} (READ_ONLY);"));
         }
 
+        if self.duckdb_ui{
+            init_script.push(UQ_START_UI_SERVER.to_string());
+        }
+
         init_script
     }
 }
@@ -71,8 +87,10 @@ pub fn parse() -> Options {
         1 => tracing::Level::DEBUG,
         _ => tracing::Level::TRACE,
     };
-
-    tracing_subscriber::fmt().with_max_level(debug_level).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::new("pingora_core=off,pingora_pool=off,pingora_proxy=off")
+            .add_directive(LevelFilter::from(debug_level).into()))
+        .init();
     opts
 }
 
@@ -80,7 +98,6 @@ pub fn parse() -> Options {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[test]
     fn init_query_empty() {
@@ -91,7 +108,9 @@ mod tests {
             gcs_secret: None,
             db_file: None,
             cors_enabled: false,
-            aws_credential_chain: false
+            aws_credential_chain: false,
+            duckdb_ui: false,
+            duckdb_ui_port: 14213,
         };
         assert!(options.init_script().is_empty())
     }
@@ -105,7 +124,9 @@ mod tests {
             gcs_secret:Some("secret".to_string()),
             db_file: None,
             cors_enabled: false,
-            aws_credential_chain: false
+            aws_credential_chain: false,
+            duckdb_ui: false,
+            duckdb_ui_port: 14213,
         };
         assert_eq!(options.init_script()[0], "CREATE SECRET gcs_secret ( TYPE GCS, KEY_ID 'key_id', SECRET 'secret');");
     }
@@ -119,13 +140,15 @@ mod tests {
             gcs_secret:None,
             db_file: None,
             cors_enabled: false,
-            aws_credential_chain: true
+            aws_credential_chain: true,
+            duckdb_ui: false,
+            duckdb_ui_port: 14213,
         };
         assert_eq!(options.init_script()[0], UQ_CREATE_AWS_CREDENTIAL_CHAIN);
     }
 
     #[test]
-    fn init_query_asw_gcs() {
+    fn init_query_was_gcs() {
         let options : Options = Options{
             port: 8080, addr: "".to_string(),
             verbose: 3,
@@ -133,9 +156,27 @@ mod tests {
             gcs_secret:Some("secret2".to_string()),
             db_file: None,
             cors_enabled: false,
-            aws_credential_chain: true
+            aws_credential_chain: true,
+            duckdb_ui: false,
+            duckdb_ui_port: 14213,
         };
         assert_eq!(options.init_script()[0], "CREATE SECRET gcs_secret ( TYPE GCS, KEY_ID 'key_id2', SECRET 'secret2');");
         assert_eq!(options.init_script()[1], UQ_CREATE_AWS_CREDENTIAL_CHAIN);
+    }
+
+    #[test]
+    fn init_duckdb_ui() {
+        let options : Options = Options{
+            port: 8080, addr: "".to_string(),
+            verbose: 3,
+            gcs_key_id: None,
+            gcs_secret: None,
+            db_file: None,
+            cors_enabled: false,
+            aws_credential_chain: false,
+            duckdb_ui: true,
+            duckdb_ui_port: 14213,
+        };
+        assert_eq!(options.init_script()[0], UQ_START_UI_SERVER);
     }
 }
