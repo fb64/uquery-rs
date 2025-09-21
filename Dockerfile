@@ -1,5 +1,5 @@
 FROM rust:1.87-slim-bookworm AS builder
-RUN apt-get update && apt-get install --no-install-recommends -y build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install --no-install-recommends -y build-essential cmake && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY ./Cargo.toml ./Cargo.lock ./
 COPY ./src ./src
@@ -16,6 +16,7 @@ RUN apt-get update &&  apt-get install --no-install-recommends -y ca-certificate
 RUN curl https://install.duckdb.org | sed "s/VER=.*$/VER=${DUCKDB_VERSION}/" | sh \
     && /root/.duckdb/cli/latest/duckdb :memory: 'INSTALL httpfs' \
     && /root/.duckdb/cli/latest/duckdb :memory: 'INSTALL iceberg' \
+    && /root/.duckdb/cli/latest/duckdb :memory: 'INSTALL ui' \
     && rm -rf /root/.duckdb/cli
 
 EXPOSE 8080
