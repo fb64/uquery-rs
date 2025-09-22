@@ -1,4 +1,4 @@
-FROM rust:1.87-slim-bookworm AS builder
+FROM rust:1.90-slim-bookworm AS builder
 RUN apt-get update && apt-get install --no-install-recommends -y build-essential cmake && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY ./Cargo.toml ./Cargo.lock ./
@@ -17,6 +17,7 @@ RUN curl https://install.duckdb.org | sed "s/VER=.*$/VER=${DUCKDB_VERSION}/" | s
     && /root/.duckdb/cli/latest/duckdb :memory: 'INSTALL httpfs' \
     && /root/.duckdb/cli/latest/duckdb :memory: 'INSTALL iceberg' \
     && /root/.duckdb/cli/latest/duckdb :memory: 'INSTALL ui' \
+    && /root/.duckdb/cli/latest/duckdb :memory: 'INSTALL ducklake' \
     && rm -rf /root/.duckdb/cli
 
 EXPOSE 8080
