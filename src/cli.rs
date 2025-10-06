@@ -3,7 +3,7 @@ use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
 pub const UQ_ATTACHED_DB_NAME: &str = "uquery_attached_db";
-const UQ_CREATE_AWS_CREDENTIAL_CHAIN: &str = "CREATE SECRET aws_secret ( TYPE S3, PROVIDER CREDENTIAL_CHAIN);";
+const UQ_CREATE_AWS_CREDENTIAL_CHAIN: &str = "CREATE SECRET aws_secret (TYPE S3, PROVIDER CREDENTIAL_CHAIN);";
 const UQ_START_UI_SERVER: &str = "CALL start_ui_server();";
 
 
@@ -50,6 +50,21 @@ pub struct Options {
     /// DuckDB UI Port
     #[arg(default_value="14213",long, env="UQ_UI_PORT")]
     pub duckdb_ui_port: u16,
+
+    /// Iceberg Catalog Endpoint
+    #[arg(long, env="UQ_ICEBERG_CATALOG_ENDPOINT")]
+    pub ic_catalog_endpoint: Option<String>,
+
+    /// Iceberg Catalog name
+    #[arg(long, env="UQ_ICEBERG_CATALOG_NAME")]
+    pub ic_catalog_name: Option<String>,
+
+    /// Iceberg User
+    #[arg(long, env="UQ_ICEBERG_USER")]
+    pub ic_user: Option<String>,
+
+    #[arg(long, env="UQ_ICEBERG_SECRET")]
+    pub ic_secret: Option<String>,
 }
 
 impl Options{
@@ -57,14 +72,25 @@ impl Options{
         let key_opt = self.gcs_key_id.as_ref();
         let secret_opt = self.gcs_secret.as_ref();
         let db_file_opt = self.db_file.as_ref();
+        let ic_catalog_endpoint = self.ic_catalog_endpoint.as_ref();
+        let ic_catalog_name = self.ic_catalog_name.as_ref();
+        let ic_user = self.ic_user.as_ref();
+        let ic_secret = self.ic_secret.as_ref();
         let mut init_script = Vec::new();
 
         if let (Some(key), Some(secret)) = (key_opt, secret_opt){
-            init_script.push(format!("CREATE SECRET gcs_secret ( TYPE GCS, KEY_ID '{key}', SECRET '{secret}');"));
+            init_script.push(format!("CREATE SECRET gcs_secret (TYPE GCS, KEY_ID '{key}', SECRET '{secret}');"));
         }
 
         if self.aws_credential_chain{
             init_script.push(UQ_CREATE_AWS_CREDENTIAL_CHAIN.to_string());
+        }
+
+        if let (Some(ic_catalog_endpoint), Some(ic_catalog_name), Some(ic_user), Some(ic_secret)) = (ic_catalog_endpoint, ic_catalog_name, ic_user, ic_secret,){
+            init_script.push("LOAD httpfs;".to_string()); // https://github.com/duckdb/duckdb-iceberg/issues/483
+            init_script.push("LOAD iceberg;".to_string());
+            init_script.push(format!("CREATE SECRET ic_secret (TYPE iceberg, CLIENT_ID '{ic_user}', CLIENT_SECRET '{ic_secret}', ENDPOINT '{ic_catalog_endpoint}');"));
+            init_script.push(format!("ATTACH '{ic_catalog_name}' AS iceberg (TYPE iceberg, ENDPOINT '{ic_catalog_endpoint}');"));
         }
 
         if let Some(db_file) = db_file_opt{
@@ -99,11 +125,11 @@ pub fn parse() -> Options {
 mod tests {
     use super::*;
 
-    #[test]
-    fn init_query_empty() {
-        let options : Options = Options{
-            port: 8080, addr: "".to_string(),
-            verbose: 3,
+    fn test_opts() -> Options{
+        Options{
+            port: 8080,
+            addr: "0.0.0.0".into(),
+            verbose: 0,
             gcs_key_id: None,
             gcs_secret: None,
             db_file: None,
@@ -111,38 +137,34 @@ mod tests {
             aws_credential_chain: false,
             duckdb_ui: false,
             duckdb_ui_port: 14213,
-        };
+            ic_catalog_endpoint: None,
+            ic_catalog_name: None,
+            ic_user: None,
+            ic_secret: None,
+        }
+    }
+
+    #[test]
+    fn init_query_empty() {
+        let options : Options = test_opts();
         assert!(options.init_script().is_empty())
     }
 
     #[test]
     fn init_query_gcs() {
         let options : Options = Options{
-            port: 8080, addr: "".to_string(),
-            verbose: 3,
             gcs_key_id: Some("key_id".to_string()),
             gcs_secret:Some("secret".to_string()),
-            db_file: None,
-            cors_enabled: false,
-            aws_credential_chain: false,
-            duckdb_ui: false,
-            duckdb_ui_port: 14213,
+            ..test_opts()
         };
-        assert_eq!(options.init_script()[0], "CREATE SECRET gcs_secret ( TYPE GCS, KEY_ID 'key_id', SECRET 'secret');");
+        assert_eq!(options.init_script()[0], "CREATE SECRET gcs_secret (TYPE GCS, KEY_ID 'key_id', SECRET 'secret');");
     }
 
     #[test]
     fn init_query_aws() {
         let options : Options = Options{
-            port: 8080, addr: "".to_string(),
-            verbose: 3,
-            gcs_key_id: None,
-            gcs_secret:None,
-            db_file: None,
-            cors_enabled: false,
             aws_credential_chain: true,
-            duckdb_ui: false,
-            duckdb_ui_port: 14213,
+            ..test_opts()
         };
         assert_eq!(options.init_script()[0], UQ_CREATE_AWS_CREDENTIAL_CHAIN);
     }
@@ -150,33 +172,36 @@ mod tests {
     #[test]
     fn init_query_was_gcs() {
         let options : Options = Options{
-            port: 8080, addr: "".to_string(),
-            verbose: 3,
             gcs_key_id: Some("key_id2".to_string()),
             gcs_secret:Some("secret2".to_string()),
-            db_file: None,
-            cors_enabled: false,
-            aws_credential_chain: true,
-            duckdb_ui: false,
-            duckdb_ui_port: 14213,
+            ..test_opts()
         };
-        assert_eq!(options.init_script()[0], "CREATE SECRET gcs_secret ( TYPE GCS, KEY_ID 'key_id2', SECRET 'secret2');");
-        assert_eq!(options.init_script()[1], UQ_CREATE_AWS_CREDENTIAL_CHAIN);
+        assert_eq!(options.init_script()[0], "CREATE SECRET gcs_secret (TYPE GCS, KEY_ID 'key_id2', SECRET 'secret2');");
     }
 
     #[test]
     fn init_duckdb_ui() {
         let options : Options = Options{
-            port: 8080, addr: "".to_string(),
-            verbose: 3,
-            gcs_key_id: None,
-            gcs_secret: None,
-            db_file: None,
-            cors_enabled: false,
-            aws_credential_chain: false,
             duckdb_ui: true,
             duckdb_ui_port: 14213,
+            ..test_opts()
         };
         assert_eq!(options.init_script()[0], UQ_START_UI_SERVER);
+    }
+
+    #[test]
+    fn init_iceberg_init() {
+        let options : Options = Options{
+            ic_catalog_endpoint: Some("https://anycatalog.com/api/catalog".to_string()),
+            ic_catalog_name: Some("my_catalog".to_string()),
+            ic_user: Some("ic_user".to_string()),
+            ic_secret: Some("ic_secret".to_string()),
+            ..test_opts()
+
+        };
+        assert_eq!(options.init_script()[0], "LOAD httpfs;");
+        assert_eq!(options.init_script()[1], "LOAD iceberg;");
+        assert_eq!(options.init_script()[2], "CREATE SECRET ic_secret (TYPE iceberg, CLIENT_ID 'ic_user', CLIENT_SECRET 'ic_secret', ENDPOINT 'https://anycatalog.com/api/catalog');");
+        assert_eq!(options.init_script()[3], "ATTACH 'my_catalog' AS iceberg (TYPE iceberg, ENDPOINT 'https://anycatalog.com/api/catalog');");
     }
 }
