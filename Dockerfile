@@ -18,6 +18,7 @@ RUN curl https://install.duckdb.org | sh \
     && /root/.duckdb/cli/${DUCKDB_VERSION}/duckdb :memory: 'INSTALL iceberg' \
     && /root/.duckdb/cli/${DUCKDB_VERSION}/duckdb :memory: 'INSTALL ui' \
     && /root/.duckdb/cli/${DUCKDB_VERSION}/duckdb :memory: 'INSTALL ducklake' \
+    && /root/.duckdb/cli/${DUCKDB_VERSION}/duckdb :memory: 'INSTALL gcs FROM community' \
     && rm -rf /root/.duckdb/cli
 
 EXPOSE 8080

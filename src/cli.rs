@@ -2,8 +2,19 @@ use clap::Parser;
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
+/// Attached database name
 pub const UQ_ATTACHED_DB_NAME: &str = "uquery_attached_db";
+
+/// Enable the provider credential chain for AWS
 const UQ_CREATE_AWS_CREDENTIAL_CHAIN: &str = "CREATE SECRET aws_secret (TYPE S3, PROVIDER CREDENTIAL_CHAIN);";
+
+/// Configure GCS community extension to use the credential chain provider for GCP and enable gRPC
+const UQ_CREATE_GCP_CREDENTIAL_CHAIN: &str = r#"INSTALL gcs from community;
+LOAD gcs;
+SET gcs_enable_grpc=true;
+CREATE SECRET gcp_secret (TYPE gcp, PROVIDER credential_chain);"#;
+
+/// Start DuckDB UI
 const UQ_START_UI_SERVER: &str = "CALL start_ui_server();";
 
 
@@ -23,13 +34,17 @@ pub struct Options {
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
 
-    /// Google Clous Storage Key ID
+    /// Google Cloud Storage Key ID
     #[arg(long, env="UQ_GCS_KEY_ID")]
     pub gcs_key_id: Option<String>,
 
-    /// Google Clous Storage Secret
+    /// Google Cloud Storage Secret
     #[arg(long, env="UQ_GCS_SECRET")]
     pub gcs_secret: Option<String>,
+
+    /// Enable GCS Credential Chain
+    #[arg(long, env="UQ_GCS_CREDENTIAL_CHAIN")]
+    pub gcs_credential_chain: bool,
 
     /// DuckDB database file to attach in read only mode and use as default
     #[arg(short, long, env="UQ_DB_FILE")]
@@ -80,6 +95,8 @@ impl Options{
 
         if let (Some(key), Some(secret)) = (key_opt, secret_opt){
             init_script.push(format!("CREATE SECRET gcs_secret (TYPE GCS, KEY_ID '{key}', SECRET '{secret}');"));
+        }else if self.gcs_credential_chain{
+            init_script.push(UQ_CREATE_GCP_CREDENTIAL_CHAIN.to_string());
         }
 
         if self.aws_credential_chain{
@@ -132,6 +149,7 @@ mod tests {
             verbose: 0,
             gcs_key_id: None,
             gcs_secret: None,
+            gcs_credential_chain: false,
             db_file: None,
             cors_enabled: false,
             aws_credential_chain: false,
@@ -170,13 +188,22 @@ mod tests {
     }
 
     #[test]
-    fn init_query_was_gcs() {
+    fn init_query_secret_gcs() {
         let options : Options = Options{
             gcs_key_id: Some("key_id2".to_string()),
             gcs_secret:Some("secret2".to_string()),
             ..test_opts()
         };
         assert_eq!(options.init_script()[0], "CREATE SECRET gcs_secret (TYPE GCS, KEY_ID 'key_id2', SECRET 'secret2');");
+    }
+
+    #[test]
+    fn init_query_chain_gcs() {
+        let options : Options = Options{
+            gcs_credential_chain: true,
+            ..test_opts()
+        };
+        assert_eq!(options.init_script()[0], UQ_CREATE_GCP_CREDENTIAL_CHAIN);
     }
 
     #[test]
