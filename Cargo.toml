@@ -8,18 +8,18 @@ axum = { version = "0.8" }
 tokio = {version="1.47",features = ["full"] }
 tokio-util = { version = "*",features = ["io","io-util"] }
 serde = { version = "1.0", features = ["derive"] }
-duckdb = { version = "1.4.3", features = ["extensions-full"] }
+duckdb = { version = "1.4.4", features = ["extensions-full"] }
 arrow = {version = "56", features = ["arrow-json","arrow-csv","arrow-ipc","chrono-tz"]}
 serde_json = "1.0"
 futures-util = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tower = "*"
-tower-http = { version = "*", features = ["compression-gzip","cors"]}
+tower = "0.5"
+tower-http = { version = "0.6", features = ["compression-gzip","cors"]}
 clap = { version = "4.5", features = ["derive","env"] }
 async-trait = "0.1.88"
-pingora = {version = "0.6.0", features=["proxy"]}
+pingora = {version = "0.7.0", features=["proxy"]}
 
 [dev-dependencies]
-polars = { version = "0.48"}
-polars-io = { version = "0.48",features = ["ipc_streaming","json"]}
+polars = { version = "0.49"}
+polars-io = { version = "0.49",features = ["ipc_streaming","json"]}
