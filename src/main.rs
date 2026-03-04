@@ -1,68 +1,43 @@
 use std::fmt::Display;
 use std::sync::{Arc, Mutex};
 
-use crate::cli::UQ_ATTACHED_DB_NAME;
-use crate::error::UQueryError;
-use arrow::array::RecordBatchWriter;
-use arrow::csv::Writer;
-use arrow::ipc::writer::StreamWriter;
-use arrow::json::{ArrayWriter, LineDelimitedWriter};
+use crate::cli::options::UQ_ATTACHED_DB_NAME;
+use crate::web::routers::{
+    CONTENT_TYPE_ARROW, CONTENT_TYPE_CSV, CONTENT_TYPE_JSON, CONTENT_TYPE_JSONLINES,
+};
 use async_trait::async_trait;
-use axum::body::Body;
-use axum::extract::State;
-use axum::http::header::{ACCEPT, CONTENT_TYPE};
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::Response;
-use axum::routing::post;
-use axum::{Json, Router};
-use duckdb::{Arrow, Connection};
-use pingora::prelude::{HttpPeer, ProxyHttp, RequestHeader, Session, Result, Server, http_proxy_service};
-use serde::{Deserialize, Serialize};
+use duckdb::Connection;
+use pingora::prelude::{
+    HttpPeer, ProxyHttp, RequestHeader, Result, Server, Session, http_proxy_service,
+};
 use tokio::signal;
-use tokio::task::spawn_blocking;
 use tokio::time::Instant;
-use tokio_util::io::{ReaderStream, SyncIoBridge};
-use tower::ServiceBuilder;
-use tower_http::compression::CompressionLayer;
-use tower_http::cors::CorsLayer;
 use tracing::{debug, info};
 
 mod cli;
 mod error;
-
-const CONTENT_TYPE_CSV: &str = "text/csv";
-const CONTENT_TYPE_JSON: &str = "application/json";
-const CONTENT_TYPE_JSONLINES: &str = "application/jsonlines";
-const CONTENT_TYPE_JSONL: &str = "application/jsonl";
-const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
-const CONTENT_TYPE_ANY: &str = "*/*";
-
-#[derive(Deserialize, Serialize)]
-struct QueryRequest {
-    query: String,
-}
+mod web;
 
 struct UIProxyService;
 
 enum QueryResponseFormat {
-    CSV,
-    JSON,
-    ARROW,
-    JSONLINES,
+    Csv,
+    Json,
+    Arrow,
+    JsonLINES,
 }
 
 impl Display for QueryResponseFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let str = match self {
-            QueryResponseFormat::CSV => CONTENT_TYPE_CSV.to_string(),
-            QueryResponseFormat::JSON => CONTENT_TYPE_JSON.to_string(),
-            QueryResponseFormat::ARROW => CONTENT_TYPE_ARROW.to_string(),
-            QueryResponseFormat::JSONLINES => CONTENT_TYPE_JSONLINES.to_string(),
+            QueryResponseFormat::Csv => CONTENT_TYPE_CSV.to_string(),
+            QueryResponseFormat::Json => CONTENT_TYPE_JSON.to_string(),
+            QueryResponseFormat::Arrow => CONTENT_TYPE_ARROW.to_string(),
+            QueryResponseFormat::JsonLINES => CONTENT_TYPE_JSONLINES.to_string(),
         };
         write!(f, "{}", str)
     }
 }
-
 
 struct UQueryState {
     duckdb_connection: Mutex<Connection>,
@@ -71,46 +46,58 @@ struct UQueryState {
 
 impl UQueryState {
     fn get_new_connection(&self) -> Connection {
-        let new_conn = self.duckdb_connection.try_lock().unwrap().try_clone().unwrap();
-        if self.attached{
-            new_conn.execute(format!("USE {UQ_ATTACHED_DB_NAME};").as_str(),[]).unwrap();
+        let new_conn = self
+            .duckdb_connection
+            .try_lock()
+            .unwrap()
+            .try_clone()
+            .unwrap();
+        if self.attached {
+            new_conn
+                .execute(format!("USE {UQ_ATTACHED_DB_NAME};").as_str(), [])
+                .unwrap();
         }
         new_conn
     }
 }
 
 fn main() {
-    let cli_options = cli::parse();
+    let cli_options = cli::options::parse();
     let start = Instant::now();
     let addr = format!("{}:{}", cli_options.addr, cli_options.port);
     let conn = Connection::open_in_memory().unwrap();
-    for init_query in cli_options.init_script(){
+    for init_query in cli_options.init_script() {
         conn.execute(init_query.as_str(), []).unwrap();
     }
-    let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn), attached:cli_options.db_file.is_some() });
+    let state = Arc::new(UQueryState {
+        duckdb_connection: Mutex::new(conn),
+        attached: cli_options.db_file.is_some(),
+    });
 
     let tk_runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap();
 
-    if cli_options.duckdb_ui{
+    if cli_options.duckdb_ui {
         tk_runtime.spawn_blocking(move || {
             start_duckdb_ui_proxy(cli_options.duckdb_ui_port);
         });
     }
 
     tk_runtime.block_on(async {
-            let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-            info!("uQuery server started in {:?}",start.elapsed());
-            debug!("listening on {}",addr);
-            axum::serve(listener, app(state,cli_options.cors_enabled))
-                .with_graceful_shutdown(shutdown_signal())
-                .await.unwrap();
-        });
+        let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+        info!("uQuery server started in {:?}", start.elapsed());
+        debug!("listening on {}", addr);
+        let router = web::routers::create_router(state, cli_options.cors_enabled);
+        axum::serve(listener, router)
+            .with_graceful_shutdown(shutdown_signal())
+            .await
+            .unwrap();
+    });
 }
 
-fn start_duckdb_ui_proxy(ui_port:u16){
+fn start_duckdb_ui_proxy(ui_port: u16) {
     let mut server = Server::new(None).unwrap();
     server.bootstrap();
     let service: UIProxyService = UIProxyService;
@@ -121,109 +108,14 @@ fn start_duckdb_ui_proxy(ui_port:u16){
     server.run_forever()
 }
 
-fn app(state: Arc<UQueryState>, cors_enabled: bool) -> Router {
-    let router = Router::new().route("/", post(query)).with_state(state)
-        .layer(ServiceBuilder::new().layer(CompressionLayer::new()));
-    if cors_enabled {
-        router.layer(CorsLayer::permissive())
-    }else {
-        router
-    }
-
-
-}
-
-async fn query(State(state): State<Arc<UQueryState>>, headers: HeaderMap, Json(payload): Json<QueryRequest>) -> Result<Response, UQueryError> {
-
-    let format = get_first_compatible_format(&headers).ok_or_else(||UQueryError {
-        status_code: StatusCode::NOT_ACCEPTABLE,
-        title: "Unsupported response format".to_string(),
-        detail: format!("format [{}] is not supported", headers.get(ACCEPT).unwrap().to_str().unwrap().to_lowercase().as_str()),
-    })?;
-
-    let content_type = format.to_string();
-    let (tx, rx) = tokio::io::duplex(65_536);
-    let reader_stream = ReaderStream::new(rx);
-    let (result_sender, result_receiver) = tokio::sync::oneshot::channel();
-
-    spawn_blocking(move || {
-        let bridge = SyncIoBridge::new(tx);
-        let query_start = Instant::now();
-        let conn = state.get_new_connection();
-
-        let statement = conn.prepare(payload.query.as_str());
-        match statement{
-            Ok(mut statement) => {
-                match statement.query_arrow([]) {
-                    Ok(arrow) => {
-                        debug!("run: [{}] in {:?}",payload.query, query_start.elapsed());
-                        let _ = result_sender.send(Ok::<(), String>(()));
-                        match format {
-                            QueryResponseFormat::CSV => {
-                                let writer = Writer::new(bridge);
-                                handle_response_write(writer, arrow);
-                            }
-                            QueryResponseFormat::JSON => {
-                                let writer = ArrayWriter::new(bridge);
-                                handle_response_write(writer, arrow);
-                            }
-                            QueryResponseFormat::ARROW => {
-                                let writer = StreamWriter::try_new(bridge, &*arrow.get_schema()).unwrap();
-                                handle_response_write(writer, arrow);
-                            }
-                            QueryResponseFormat::JSONLINES=>{
-                                let writer = LineDelimitedWriter::new(bridge);
-                                handle_response_write(writer, arrow);
-                            }
-                        };
-                    }
-                    Err(err) => {
-                        let _ = result_sender.send(Err(err.to_string()));
-                    }
-                }
-            }Err(err) =>{
-                let _ = result_sender.send(Err(err.to_string()));
-            }
-        }
-    });
-
-    let result = result_receiver.await.unwrap();
-    match result {
-        Ok(_) => Ok(axum::response::Response::builder()
-            .status(StatusCode::OK)
-            .header(CONTENT_TYPE, content_type)
-            .body(Body::from_stream(reader_stream))
-            .unwrap()),
-        Err(err) => Err(UQueryError {
-            status_code: StatusCode::BAD_REQUEST,
-            title: "SQL Error".to_string(),
-            detail: err,
-        })
-    }
-}
-
-fn handle_response_write<W: RecordBatchWriter>(mut writer: W, data: Arrow) {
+/*fn handle_response_write<W: RecordBatchWriter>(mut writer: W, data: Arrow) {
     for rb in data {
         writer.write(&rb).unwrap();
     }
     writer.close().unwrap();
-}
+}*/
 
-fn get_first_compatible_format(headers: &HeaderMap) -> Option<QueryResponseFormat> {
-    let accept_value = headers.get(ACCEPT)?.to_str().unwrap().to_lowercase();
-    for format in accept_value.split(",").collect::<Vec<&str>>(){
-        match format {
-            CONTENT_TYPE_JSON | CONTENT_TYPE_ANY => { return Some(QueryResponseFormat::JSON) }
-            CONTENT_TYPE_CSV => { return Some(QueryResponseFormat::CSV) }
-            CONTENT_TYPE_ARROW => { return Some(QueryResponseFormat::ARROW) }
-            CONTENT_TYPE_JSONLINES | CONTENT_TYPE_JSONL => { return Some(QueryResponseFormat::JSONLINES) }
-            _ => {}
-        };
-    }
-    None
-}
-
-async fn shutdown_signal(){
+async fn shutdown_signal() {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -252,16 +144,18 @@ async fn shutdown_signal(){
 #[async_trait]
 impl ProxyHttp for UIProxyService {
     type CTX = ();
-    fn new_ctx(&self) -> Self::CTX {
-        ()
-    }
+    fn new_ctx(&self) -> Self::CTX {}
 
     async fn upstream_peer(
         &self,
         _session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
-        let upstream = Box::new(HttpPeer::new("localhost:4213", false, "localhost".to_string()));
+        let upstream = Box::new(HttpPeer::new(
+            "localhost:4213",
+            false,
+            "localhost".to_string(),
+        ));
         Ok(upstream)
     }
 
@@ -272,58 +166,92 @@ impl ProxyHttp for UIProxyService {
         _ctx: &mut Self::CTX,
     ) -> Result<()> {
         upstream_request.insert_header("Host", "localhost").unwrap();
-        upstream_request.insert_header("Referer", "http://localhost:4213/").unwrap();
-        upstream_request.insert_header("Origin", "http://localhost:4213").unwrap();
+        upstream_request
+            .insert_header("Referer", "http://localhost:4213/")
+            .unwrap();
+        upstream_request
+            .insert_header("Origin", "http://localhost:4213")
+            .unwrap();
         Ok(())
     }
 }
 
-
 #[cfg(test)]
 mod tests {
+    use crate::cli::options::UQ_ATTACHED_DB_NAME;
+    use crate::web::request::QueryRequest;
+    use crate::web::routers::create_router;
+    use crate::{QueryResponseFormat, UQueryState};
     use axum::body::Body;
     use axum::http;
-    use axum::http::header::{ACCEPT, ACCEPT_ENCODING, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_ENCODING, CONTENT_TYPE, ORIGIN};
-    use axum::http::{HeaderMap, Request, StatusCode};
+    use axum::http::header::{
+        ACCEPT, ACCEPT_ENCODING, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
+        CONTENT_ENCODING, CONTENT_TYPE, ORIGIN,
+    };
+    use axum::http::{Request, StatusCode};
     use axum::response::Response;
     use duckdb::Connection;
     use futures_util::TryStreamExt;
     use polars::error::PolarsError;
-    use polars_io::ipc::IpcStreamReader;
     use polars_io::SerReader;
+    use polars_io::ipc::IpcStreamReader;
     use serde_json::Value;
     use std::io::Cursor;
     use std::str::from_utf8;
     use std::sync::{Arc, Mutex};
     use tower::ServiceExt;
 
-    use crate::cli::UQ_ATTACHED_DB_NAME;
-    use crate::{app, get_first_compatible_format, QueryRequest, QueryResponseFormat, UQueryState};
-
     const TEST_QUERY: &str = "SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)";
 
     #[tokio::test]
     async fn query_json_test() {
-        let response = perform_request(QueryRequest { query: TEST_QUERY.to_string() }, QueryResponseFormat::JSON).await;
+        let response = perform_json_request(
+            QueryRequest::new(TEST_QUERY.to_string()),
+            QueryResponseFormat::Json,
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
-        assert_eq!(from_utf8(&*result).unwrap(), "[{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}]");
+        assert_eq!(
+            from_utf8(&*result).unwrap(),
+            "[{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}]"
+        );
+    }
+
+    #[tokio::test]
+    async fn query_text_plain_json_test() {
+        let response =
+            perform_plain_text_request(TEST_QUERY.to_string(), QueryResponseFormat::Json).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let result = read_response(response).await;
+        assert_eq!(
+            from_utf8(&*result).unwrap(),
+            "[{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}]"
+        );
     }
 
     #[tokio::test]
     async fn query_csv_test() {
-        let response = perform_request(QueryRequest { query: TEST_QUERY.to_string() }, QueryResponseFormat::CSV).await;
+        let response = perform_json_request(
+            QueryRequest::new(TEST_QUERY.to_string()),
+            QueryResponseFormat::Csv,
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
-        assert_eq!(from_utf8(&*result).unwrap(), "Id,Name,Description\n1,Rust,\"Safe, concurrent, performant systems language\"\n");
+        assert_eq!(
+            from_utf8(&*result).unwrap(),
+            "Id,Name,Description\n1,Rust,\"Safe, concurrent, performant systems language\"\n"
+        );
     }
 
     #[tokio::test]
     async fn query_arrow_test() -> Result<(), PolarsError> {
-        let response = perform_request(
-            QueryRequest { query: TEST_QUERY.to_string() },
-            QueryResponseFormat::ARROW,
-        ).await;
+        let response = perform_json_request(
+            QueryRequest::new(TEST_QUERY.to_string()),
+            QueryResponseFormat::Arrow,
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
         let df = IpcStreamReader::new(Cursor::new(result)).finish()?;
@@ -336,14 +264,14 @@ mod tests {
         Ok(())
     }
 
-
     #[tokio::test]
     async fn query_json_gzip_test() {
-        let response = perform_request_compress(
-            QueryRequest { query: TEST_QUERY.to_string() },
-            QueryResponseFormat::JSON,
+        let response = perform_json_request_compress(
+            QueryRequest::new(TEST_QUERY.to_string()),
+            QueryResponseFormat::Json,
             true,
-        ).await;
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers().get(CONTENT_ENCODING).unwrap(), "gzip");
         let result = read_response(response).await;
@@ -353,28 +281,36 @@ mod tests {
 
     #[tokio::test]
     async fn query_attached_db_test() {
-        let request = QueryRequest { query: "SELECT * from language order by id".to_string() };
+        let request = QueryRequest::new("SELECT * from language order by id".to_string());
         let json = serde_json::to_string(&request).unwrap();
 
         let builder = Request::builder()
             .method(http::Method::POST)
             .uri("/")
             .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, QueryResponseFormat::JSON.to_string());
+            .header(ACCEPT, QueryResponseFormat::Json.to_string());
 
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute(format!("ATTACH 'tests/test.db' as {UQ_ATTACHED_DB_NAME};").as_str(), []).unwrap();
-        let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn), attached: true });
-        let response = app(state,false).oneshot(
-            builder.body(Body::from(json)).unwrap()
-        ).await.unwrap();
+        conn.execute(
+            format!("ATTACH 'tests/test.db' as {UQ_ATTACHED_DB_NAME};").as_str(),
+            [],
+        )
+        .unwrap();
+        let state = Arc::new(UQueryState {
+            duckdb_connection: Mutex::new(conn),
+            attached: true,
+        });
+        let response = create_router(state, false)
+            .oneshot(builder.body(Body::from(json)).unwrap())
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
         let response_string = from_utf8(&*result).unwrap();
-        let json_array:Vec<Value> = serde_json::from_str(response_string).unwrap();
-        assert_eq!(json_array.len(),10);
-        assert_eq!(json_array[0].get("id").unwrap().as_i64().unwrap(),1);
-        assert_eq!(json_array[0].get("name").unwrap().as_str().unwrap(),"Rust");
+        let json_array: Vec<Value> = serde_json::from_str(response_string).unwrap();
+        assert_eq!(json_array.len(), 10);
+        assert_eq!(json_array[0].get("id").unwrap().as_i64().unwrap(), 1);
+        assert_eq!(json_array[0].get("name").unwrap().as_str().unwrap(), "Rust");
     }
 
     #[tokio::test]
@@ -383,184 +319,206 @@ mod tests {
             .method(http::Method::OPTIONS)
             .uri("/")
             .header(ACCESS_CONTROL_ALLOW_METHODS, "POST")
-            .header(ORIGIN,"https://origin.com");
+            .header(ORIGIN, "https://origin.com");
 
         let conn = Connection::open_in_memory().unwrap();
-        let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn), attached: false });
-        let response = app(state,true).oneshot(
-            builder.body(Body::empty()).unwrap()
-        ).await.unwrap();
+        let state = Arc::new(UQueryState {
+            duckdb_connection: Mutex::new(conn),
+            attached: false,
+        });
+        let response = create_router(state, true)
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(), "*");
-        assert_eq!(response.headers().get(ACCESS_CONTROL_ALLOW_METHODS).unwrap(), "*");
+        assert_eq!(
+            response.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
+            "*"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(ACCESS_CONTROL_ALLOW_METHODS)
+                .unwrap(),
+            "*"
+        );
     }
 
     #[tokio::test]
     async fn query_sql_error_test() {
-        let response = perform_request(QueryRequest { query: "bad command".to_string() }, QueryResponseFormat::JSON).await;
+        let response = perform_json_request(
+            QueryRequest::new("bad command".to_string()),
+            QueryResponseFormat::Json,
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let result = read_response(response).await;
         let error: Value = serde_json::from_str(from_utf8(&*result).unwrap()).unwrap();
-        assert_eq!(error["status"].as_u64().unwrap(),400);
-        assert_eq!(error["title"],"SQL Error");
+        assert_eq!(error["status"].as_u64().unwrap(), 400);
+        assert_eq!(error["title"], "SQL Error");
         assert!(!error["detail"].to_string().is_empty());
-    }
-
-    #[test]
-    fn content_negotiation_test() {
-        let mut headers = HeaderMap::new();
-        headers.insert(ACCEPT, "application/json,text/html".parse().unwrap());
-        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::JSON)));
-
-        headers.remove(ACCEPT);
-        headers.insert(ACCEPT, "application/json".parse().unwrap());
-        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::JSON)));
-
-        headers.remove(ACCEPT);
-        headers.insert(ACCEPT, "text/csv".parse().unwrap());
-        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::CSV)));
-
-        headers.remove(ACCEPT);
-        headers.insert(ACCEPT, "application/vnd.apache.arrow.stream".parse().unwrap());
-        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::ARROW)));
-
-        headers.remove(ACCEPT);
-        headers.insert(ACCEPT, "application/json,text/csv".parse().unwrap());
-        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::JSON)));
-
-        headers.remove(ACCEPT);
-        headers.insert(ACCEPT, "application/xml,application/vnd.apache.arrow.stream".parse().unwrap());
-        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::ARROW)));
-
-        headers.remove(ACCEPT);
-        headers.insert(ACCEPT, "text/html,application/xml".parse().unwrap());
-        assert!(matches!(get_first_compatible_format(&headers), None));
-
-        headers.remove(ACCEPT);
-        headers.insert(ACCEPT, "application/jsonlines".parse().unwrap());
-        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::JSONLINES)));
-
-        headers.remove(ACCEPT);
-        headers.insert(ACCEPT, "application/jsonl".parse().unwrap());
-        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::JSONLINES)));
-
-        headers.remove(ACCEPT);
-        headers.insert(ACCEPT, "*/*".parse().unwrap());
-        assert!(matches!(get_first_compatible_format(&headers), Some(QueryResponseFormat::JSON)));
-
-        headers.remove(ACCEPT);
-        assert!(matches!(get_first_compatible_format(&headers), None));
     }
 
     #[tokio::test]
     async fn read_csv_test() {
-        let response = perform_request(
-            QueryRequest { query: "select * from read_csv('tests/test.csv')".to_string() },
-            QueryResponseFormat::JSON
-        ).await;
+        let response = perform_json_request(
+            QueryRequest::new("select * from read_csv('tests/test.csv')".to_string()),
+            QueryResponseFormat::Json,
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
         let response_string = from_utf8(&*result).unwrap();
-        let json_array:Vec<Value> = serde_json::from_str(response_string).unwrap();
-        assert_eq!(json_array.len(),2);
-        assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(),"abc");
-        assert_eq!(json_array[0].get("f_int").unwrap().as_i64().unwrap(),123);
-        assert_eq!(json_array[0].get("f_float").unwrap().as_f64().unwrap(),4.56);
+        let json_array: Vec<Value> = serde_json::from_str(response_string).unwrap();
+        assert_eq!(json_array.len(), 2);
+        assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(), "abc");
+        assert_eq!(json_array[0].get("f_int").unwrap().as_i64().unwrap(), 123);
+        assert_eq!(
+            json_array[0].get("f_float").unwrap().as_f64().unwrap(),
+            4.56
+        );
     }
 
     #[tokio::test]
     async fn read_parquet_test() {
-        let response = perform_request(
-            QueryRequest { query: "select * from 'tests/test.zstd.parquet'".to_string() },
-            QueryResponseFormat::JSON
-        ).await;
+        let response = perform_json_request(
+            QueryRequest::new("select * from 'tests/test.zstd.parquet'".to_string()),
+            QueryResponseFormat::Json,
+        )
+        .await;
 
         assert_eq!(response.status(), StatusCode::OK);
 
         let result = read_response(response).await;
         let response_string = from_utf8(&*result).unwrap();
-        let json_array:Vec<Value> = serde_json::from_str(response_string).unwrap();
+        let json_array: Vec<Value> = serde_json::from_str(response_string).unwrap();
 
-        assert_eq!(json_array.len(),2);
-        assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(),"abc");
-        assert_eq!(json_array[0].get("f_int").unwrap().as_i64().unwrap(),123);
-        assert_eq!(json_array[0].get("f_float").unwrap().as_f64().unwrap(),4.56);
+        assert_eq!(json_array.len(), 2);
+        assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(), "abc");
+        assert_eq!(json_array[0].get("f_int").unwrap().as_i64().unwrap(), 123);
+        assert_eq!(
+            json_array[0].get("f_float").unwrap().as_f64().unwrap(),
+            4.56
+        );
     }
 
     #[tokio::test]
     async fn read_json_test() {
-        let response = perform_request(
-            QueryRequest { query: "select * from 'tests/test.jsonl'".to_string() },
-            QueryResponseFormat::JSON
-        ).await;
+        let response = perform_json_request(
+            QueryRequest::new("select * from 'tests/test.jsonl'".to_string()),
+            QueryResponseFormat::Json,
+        )
+        .await;
 
         assert_eq!(response.status(), StatusCode::OK);
-        
+
         let result = read_response(response).await;
         let response_string = from_utf8(&*result).unwrap();
-        let json_array:Vec<Value> = serde_json::from_str(response_string).unwrap();
-        
-        assert_eq!(json_array.len(),2);
-        assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(),"abc");
-        assert_eq!(json_array[0].get("f_int").unwrap().as_i64().unwrap(),123);
-        assert_eq!(json_array[0].get("f_float").unwrap().as_f64().unwrap(),4.56);
+        let json_array: Vec<Value> = serde_json::from_str(response_string).unwrap();
+
+        assert_eq!(json_array.len(), 2);
+        assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(), "abc");
+        assert_eq!(json_array[0].get("f_int").unwrap().as_i64().unwrap(), 123);
+        assert_eq!(
+            json_array[0].get("f_float").unwrap().as_f64().unwrap(),
+            4.56
+        );
+    }
+
+    #[tokio::test]
+    async fn text_plain_request_test() {
+        let response = perform_plain_text_request(
+            "select * from 'tests/test.jsonl'".to_string(),
+            QueryResponseFormat::Json,
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let result = read_response(response).await;
+        let response_string = from_utf8(&*result).unwrap();
+        let json_array: Vec<Value> = serde_json::from_str(response_string).unwrap();
+
+        assert_eq!(json_array.len(), 2);
+        assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(), "abc");
+        assert_eq!(json_array[0].get("f_int").unwrap().as_i64().unwrap(), 123);
+        assert_eq!(
+            json_array[0].get("f_float").unwrap().as_f64().unwrap(),
+            4.56
+        );
     }
 
     #[tokio::test]
     async fn read_jsonlines_test() {
-        let response = perform_request(
-            QueryRequest { query: "select * from 'tests/test.jsonl'".to_string() },
-            QueryResponseFormat::JSONLINES
-        ).await;
+        let response = perform_json_request(
+            QueryRequest::new("select * from 'tests/test.jsonl'".to_string()),
+            QueryResponseFormat::JsonLINES,
+        )
+        .await;
 
         assert_eq!(response.status(), StatusCode::OK);
 
         let result = read_response(response).await;
         let response_string = from_utf8(&*result).unwrap().lines().collect::<Vec<&str>>();
-        let json_first:Value = serde_json::from_str(response_string.get(0).unwrap()).unwrap();
+        let json_first: Value = serde_json::from_str(response_string.get(0).unwrap()).unwrap();
 
-        assert_eq!(response_string.len(),2);
-        assert_eq!(json_first.get("f_str").unwrap().as_str().unwrap(),"abc");
-        assert_eq!(json_first.get("f_int").unwrap().as_i64().unwrap(),123);
-        assert_eq!(json_first.get("f_float").unwrap().as_f64().unwrap(),4.56);
+        assert_eq!(response_string.len(), 2);
+        assert_eq!(json_first.get("f_str").unwrap().as_str().unwrap(), "abc");
+        assert_eq!(json_first.get("f_int").unwrap().as_i64().unwrap(), 123);
+        assert_eq!(json_first.get("f_float").unwrap().as_f64().unwrap(), 4.56);
     }
 
     #[tokio::test]
     /*
-        The following macro table has been created in the tests/test.db DuckDB database file
-        create macro table test() as select * from 'tests/test.zstd.parquet'
-     */
+       The following macro table has been created in the tests/test.db DuckDB database file
+       create macro table test() as select * from 'tests/test.zstd.parquet'
+    */
     async fn query_attached_macro_table_test() {
-        let request = QueryRequest { query: "SELECT * from test()".to_string() };
+        let request = QueryRequest::new("SELECT * from test()".to_string());
         let json = serde_json::to_string(&request).unwrap();
 
         let builder = Request::builder()
             .method(http::Method::POST)
             .uri("/")
             .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, QueryResponseFormat::JSON.to_string());
+            .header(ACCEPT, QueryResponseFormat::Json.to_string());
 
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute(format!("ATTACH 'tests/test.db' as {UQ_ATTACHED_DB_NAME};").as_str(), []).unwrap();
-        let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn), attached: true });
-        let response = app(state,false).oneshot(
-            builder.body(Body::from(json)).unwrap()
-        ).await.unwrap();
+        conn.execute(
+            format!("ATTACH 'tests/test.db' as {UQ_ATTACHED_DB_NAME};").as_str(),
+            [],
+        )
+        .unwrap();
+        let state = Arc::new(UQueryState {
+            duckdb_connection: Mutex::new(conn),
+            attached: true,
+        });
+        let response = create_router(state, false)
+            .oneshot(builder.body(Body::from(json)).unwrap())
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
         let response_string = from_utf8(&*result).unwrap();
-        let json_array:Vec<Value> = serde_json::from_str(response_string).unwrap();
-        assert_eq!(json_array.len(),2);
-        assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(),"abc");
-        assert_eq!(json_array[0].get("f_int").unwrap().as_i64().unwrap(),123);
-        assert_eq!(json_array[0].get("f_float").unwrap().as_f64().unwrap(),4.56);
+        let json_array: Vec<Value> = serde_json::from_str(response_string).unwrap();
+        assert_eq!(json_array.len(), 2);
+        assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(), "abc");
+        assert_eq!(json_array[0].get("f_int").unwrap().as_i64().unwrap(), 123);
+        assert_eq!(
+            json_array[0].get("f_float").unwrap().as_f64().unwrap(),
+            4.56
+        );
     }
 
-    async fn perform_request(request: QueryRequest, format: QueryResponseFormat) -> Response {
-        perform_request_compress(request, format, false).await
+    async fn perform_json_request(request: QueryRequest, format: QueryResponseFormat) -> Response {
+        perform_json_request_compress(request, format, false).await
     }
 
-    async fn perform_request_compress(request: QueryRequest, format: QueryResponseFormat, compress: bool) -> Response {
+    async fn perform_json_request_compress(
+        request: QueryRequest,
+        format: QueryResponseFormat,
+        compress: bool,
+    ) -> Response {
         let json = serde_json::to_string(&request).unwrap();
 
         let mut builder = Request::builder()
@@ -572,21 +530,46 @@ mod tests {
             builder = builder.header(ACCEPT_ENCODING, "gzip");
         }
         let conn = Connection::open_in_memory().unwrap();
-        let state = Arc::new(UQueryState { duckdb_connection: Mutex::new(conn), attached: false });
-        app(state,false).oneshot(
-            builder.body(Body::from(json)).unwrap()
-        ).await.unwrap()
+        let state = Arc::new(UQueryState {
+            duckdb_connection: Mutex::new(conn),
+            attached: false,
+        });
+        create_router(state, false)
+            .oneshot(builder.body(Body::from(json)).unwrap())
+            .await
+            .unwrap()
+    }
+
+    async fn perform_plain_text_request(sql: String, format: QueryResponseFormat) -> Response {
+        let builder = Request::builder()
+            .method(http::Method::POST)
+            .uri("/")
+            .header(CONTENT_TYPE, "text/plain")
+            .header(ACCEPT, format.to_string());
+        let conn = Connection::open_in_memory().unwrap();
+        let state = Arc::new(UQueryState {
+            duckdb_connection: Mutex::new(conn),
+            attached: false,
+        });
+        create_router(state, false)
+            .oneshot(builder.body(Body::from(sql)).unwrap())
+            .await
+            .unwrap()
     }
 
     async fn read_response(response: Response) -> Vec<u8> {
-        response.into_body().into_data_stream()
+        response
+            .into_body()
+            .into_data_stream()
             .map_ok(|bytes| bytes.to_vec())
-            .try_fold(Vec::new(), |mut acc, item|{
+            .try_fold(Vec::new(), |mut acc, item| {
                 acc.extend_from_slice(&item);
                 async move { Ok(acc) }
-            }).await.unwrap_or_else(|e| {
-            eprintln!("Error: {}", e);
-            Vec::new()
-        })
+            })
+            .await
+            .unwrap_or_else(|e| {
+                eprintln!("Error: {}", e);
+                Vec::new()
+            })
     }
 }

@@ -1,5 +1,5 @@
-use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
+use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
@@ -13,7 +13,8 @@ pub struct UQueryError {
 
 impl IntoResponse for UQueryError {
     fn into_response(self) -> Response {
-        let mut response = (self.status_code, serde_json::to_string(&self).unwrap()).into_response();
+        let mut response =
+            (self.status_code, serde_json::to_string(&self).unwrap()).into_response();
 
         response
             .headers_mut()
@@ -22,10 +23,10 @@ impl IntoResponse for UQueryError {
     }
 }
 
-impl Serialize for UQueryError{
+impl Serialize for UQueryError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: Serializer
+        S: Serializer,
     {
         let mut state = serializer.serialize_struct("UQueryError", 3)?;
         state.serialize_field("status", &self.status_code.as_u16())?;
