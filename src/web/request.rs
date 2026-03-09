@@ -1,5 +1,5 @@
-use crate::error::UQueryError;
-use crate::web::routers::CONTENT_TYPE_JSON;
+use crate::core::error::UQueryError;
+use crate::web::CONTENT_TYPE_JSON;
 use axum::body::Body;
 use axum::extract::FromRequest;
 use axum::http::header::CONTENT_TYPE;
@@ -41,7 +41,7 @@ where
         let bytes = axum::body::to_bytes(body, usize::MAX)
             .await
             .map_err(|e| UQueryError {
-                status_code: StatusCode::BAD_REQUEST,
+                status_code: StatusCode::BAD_REQUEST.as_u16(),
                 title: "Failed to read request body".to_string(),
                 detail: e.to_string(),
             })?;
@@ -49,7 +49,7 @@ where
         if content_type.contains(CONTENT_TYPE_JSON) {
             let payload: QueryRequest =
                 serde_json::from_slice(&bytes).map_err(|e| UQueryError {
-                    status_code: StatusCode::BAD_REQUEST,
+                    status_code: StatusCode::BAD_REQUEST.as_u16(),
                     title: "Invalid JSON".to_string(),
                     detail: e.to_string(),
                 })?;
@@ -57,7 +57,7 @@ where
         } else {
             // text/plain or any other - treat as raw SQL
             let sql = String::from_utf8(bytes.to_vec()).map_err(|e| UQueryError {
-                status_code: StatusCode::BAD_REQUEST,
+                status_code: StatusCode::BAD_REQUEST.as_u16(),
                 title: "Invalid UTF-8".to_string(),
                 detail: e.to_string(),
             })?;

@@ -1,65 +1,16 @@
-use std::fmt::Display;
-use std::sync::{Arc, Mutex};
-
-use crate::cli::options::UQ_ATTACHED_DB_NAME;
-use crate::web::routers::{
-    CONTENT_TYPE_ARROW, CONTENT_TYPE_CSV, CONTENT_TYPE_JSON, CONTENT_TYPE_JSONLINES,
-};
-use async_trait::async_trait;
+use crate::core::engine::UQueryState;
 use duckdb::Connection;
-use pingora::prelude::{
-    HttpPeer, ProxyHttp, RequestHeader, Result, Server, Session, http_proxy_service,
-};
+use pingora::prelude::{Server, http_proxy_service};
+
+use crate::web::proxy::UIProxyService;
+use std::sync::Arc;
 use tokio::signal;
 use tokio::time::Instant;
 use tracing::{debug, info};
 
 mod cli;
-mod error;
+pub mod core;
 mod web;
-
-struct UIProxyService;
-
-enum QueryResponseFormat {
-    Csv,
-    Json,
-    Arrow,
-    JsonLINES,
-}
-
-impl Display for QueryResponseFormat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str = match self {
-            QueryResponseFormat::Csv => CONTENT_TYPE_CSV.to_string(),
-            QueryResponseFormat::Json => CONTENT_TYPE_JSON.to_string(),
-            QueryResponseFormat::Arrow => CONTENT_TYPE_ARROW.to_string(),
-            QueryResponseFormat::JsonLINES => CONTENT_TYPE_JSONLINES.to_string(),
-        };
-        write!(f, "{}", str)
-    }
-}
-
-struct UQueryState {
-    duckdb_connection: Mutex<Connection>,
-    attached: bool,
-}
-
-impl UQueryState {
-    fn get_new_connection(&self) -> Connection {
-        let new_conn = self
-            .duckdb_connection
-            .try_lock()
-            .unwrap()
-            .try_clone()
-            .unwrap();
-        if self.attached {
-            new_conn
-                .execute(format!("USE {UQ_ATTACHED_DB_NAME};").as_str(), [])
-                .unwrap();
-        }
-        new_conn
-    }
-}
 
 fn main() {
     let cli_options = cli::options::parse();
@@ -69,10 +20,7 @@ fn main() {
     for init_query in cli_options.init_script() {
         conn.execute(init_query.as_str(), []).unwrap();
     }
-    let state = Arc::new(UQueryState {
-        duckdb_connection: Mutex::new(conn),
-        attached: cli_options.db_file.is_some(),
-    });
+    let state = Arc::new(UQueryState::new(conn, cli_options.db_file.is_some()));
 
     let tk_runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -108,13 +56,6 @@ fn start_duckdb_ui_proxy(ui_port: u16) {
     server.run_forever()
 }
 
-/*fn handle_response_write<W: RecordBatchWriter>(mut writer: W, data: Arrow) {
-    for rb in data {
-        writer.write(&rb).unwrap();
-    }
-    writer.close().unwrap();
-}*/
-
 async fn shutdown_signal() {
     let ctrl_c = async {
         signal::ctrl_c()
@@ -141,47 +82,13 @@ async fn shutdown_signal() {
     debug!("Shutting down uQuery server");
 }
 
-#[async_trait]
-impl ProxyHttp for UIProxyService {
-    type CTX = ();
-    fn new_ctx(&self) -> Self::CTX {}
-
-    async fn upstream_peer(
-        &self,
-        _session: &mut Session,
-        _ctx: &mut Self::CTX,
-    ) -> Result<Box<HttpPeer>> {
-        let upstream = Box::new(HttpPeer::new(
-            "localhost:4213",
-            false,
-            "localhost".to_string(),
-        ));
-        Ok(upstream)
-    }
-
-    async fn upstream_request_filter(
-        &self,
-        _session: &mut Session,
-        upstream_request: &mut RequestHeader,
-        _ctx: &mut Self::CTX,
-    ) -> Result<()> {
-        upstream_request.insert_header("Host", "localhost").unwrap();
-        upstream_request
-            .insert_header("Referer", "http://localhost:4213/")
-            .unwrap();
-        upstream_request
-            .insert_header("Origin", "http://localhost:4213")
-            .unwrap();
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::UQueryState;
     use crate::cli::options::UQ_ATTACHED_DB_NAME;
     use crate::web::request::QueryRequest;
+    use crate::web::response::QueryResponseFormat;
     use crate::web::routers::create_router;
-    use crate::{QueryResponseFormat, UQueryState};
     use axum::body::Body;
     use axum::http;
     use axum::http::header::{
@@ -198,7 +105,7 @@ mod tests {
     use serde_json::Value;
     use std::io::Cursor;
     use std::str::from_utf8;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
     use tower::ServiceExt;
 
     const TEST_QUERY: &str = "SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)";
@@ -296,10 +203,7 @@ mod tests {
             [],
         )
         .unwrap();
-        let state = Arc::new(UQueryState {
-            duckdb_connection: Mutex::new(conn),
-            attached: true,
-        });
+        let state = Arc::new(UQueryState::new(conn, true));
         let response = create_router(state, false)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
@@ -322,10 +226,7 @@ mod tests {
             .header(ORIGIN, "https://origin.com");
 
         let conn = Connection::open_in_memory().unwrap();
-        let state = Arc::new(UQueryState {
-            duckdb_connection: Mutex::new(conn),
-            attached: false,
-        });
+        let state = Arc::new(UQueryState::new(conn, false));
         let response = create_router(state, true)
             .oneshot(builder.body(Body::empty()).unwrap())
             .await
@@ -489,10 +390,7 @@ mod tests {
             [],
         )
         .unwrap();
-        let state = Arc::new(UQueryState {
-            duckdb_connection: Mutex::new(conn),
-            attached: true,
-        });
+        let state = Arc::new(UQueryState::new(conn, true));
         let response = create_router(state, false)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
@@ -530,10 +428,7 @@ mod tests {
             builder = builder.header(ACCEPT_ENCODING, "gzip");
         }
         let conn = Connection::open_in_memory().unwrap();
-        let state = Arc::new(UQueryState {
-            duckdb_connection: Mutex::new(conn),
-            attached: false,
-        });
+        let state = Arc::new(UQueryState::new(conn, false));
         create_router(state, false)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
@@ -547,10 +442,7 @@ mod tests {
             .header(CONTENT_TYPE, "text/plain")
             .header(ACCEPT, format.to_string());
         let conn = Connection::open_in_memory().unwrap();
-        let state = Arc::new(UQueryState {
-            duckdb_connection: Mutex::new(conn),
-            attached: false,
-        });
+        let state = Arc::new(UQueryState::new(conn, false));
         create_router(state, false)
             .oneshot(builder.body(Body::from(sql)).unwrap())
             .await
