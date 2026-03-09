@@ -1,6 +1,12 @@
-use crate::error::UQueryError;
+use crate::core::engine::UQueryState;
+use crate::core::error::UQueryError;
 use crate::web::request::QueryRequest;
-use crate::{QueryResponseFormat, UQueryState};
+use crate::web::response::QueryResponseFormat;
+use crate::web::{
+    CONTENT_TYPE_ANY, CONTENT_TYPE_ARROW, CONTENT_TYPE_CSV, CONTENT_TYPE_JSON, CONTENT_TYPE_JSONL,
+    CONTENT_TYPE_JSONLINES,
+};
+
 use arrow::csv::Writer;
 use arrow::ipc::writer::StreamWriter;
 use arrow::json::{ArrayWriter, LineDelimitedWriter};
@@ -22,13 +28,6 @@ use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tracing::debug;
 
-pub const CONTENT_TYPE_CSV: &str = "text/csv";
-pub const CONTENT_TYPE_JSON: &str = "application/json";
-pub const CONTENT_TYPE_JSONLINES: &str = "application/jsonlines";
-pub const CONTENT_TYPE_JSONL: &str = "application/jsonl";
-pub const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
-pub const CONTENT_TYPE_ANY: &str = "*/*";
-
 pub fn create_router(state: Arc<UQueryState>, cors_enabled: bool) -> Router {
     let router = Router::new()
         .route("/", post(query))
@@ -45,9 +44,9 @@ async fn query(
     State(state): State<Arc<UQueryState>>,
     headers: HeaderMap,
     query_request: QueryRequest,
-) -> pingora::Result<Response, UQueryError> {
+) -> Result<Response, UQueryError> {
     let format = get_first_compatible_format(&headers).ok_or_else(|| UQueryError {
-        status_code: StatusCode::NOT_ACCEPTABLE,
+        status_code: StatusCode::NOT_ACCEPTABLE.as_u16(),
         title: "Unsupported response format".to_string(),
         detail: format!(
             "format [{}] is not supported",
@@ -119,7 +118,7 @@ async fn query(
             .body(Body::from_stream(reader_stream))
             .unwrap()),
         Err(err) => Err(UQueryError {
-            status_code: StatusCode::BAD_REQUEST,
+            status_code: StatusCode::BAD_REQUEST.as_u16(),
             title: "SQL Error".to_string(),
             detail: err,
         }),
