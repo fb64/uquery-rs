@@ -5,6 +5,7 @@ pub const CONTENT_TYPE_JSONL: &str = "application/jsonl";
 pub const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
 pub const CONTENT_TYPE_ANY: &str = "*/*";
 
+pub mod consumers;
 pub mod proxy;
 pub mod request;
 pub mod response;

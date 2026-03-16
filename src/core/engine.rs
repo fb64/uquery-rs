@@ -1,32 +1,19 @@
-use crate::cli::options::UQ_ATTACHED_DB_NAME;
-use duckdb::Connection;
-use std::sync::Mutex;
+use arrow::datatypes::SchemaRef;
+use arrow::record_batch::RecordBatch;
 
-pub(crate) struct UQueryState {
-    duckdb_connection: Mutex<Connection>,
-    attached: bool,
+pub trait RecordBatchConsumer: Send {
+    fn on_schema(&mut self, schema: SchemaRef) -> Result<(), String>;
+    fn on_batch(&mut self, batch: RecordBatch) -> Result<(), String>;
+    fn finish(&mut self) -> Result<(), String>;
 }
 
-impl UQueryState {
-    pub fn new(duckdb_connection: Connection, attached: bool) -> Self {
-        Self {
-            duckdb_connection: Mutex::new(duckdb_connection),
-            attached,
-        }
-    }
+/// A validated, ready-to-stream query returned by [`UQueryEngine::prepare`].
+pub trait ExecutableQuery: Send {
+    fn execute(&mut self, consumer: &mut dyn RecordBatchConsumer) -> Result<(), String>;
+}
 
-    pub(crate) fn get_new_connection(&self) -> Connection {
-        let new_conn = self
-            .duckdb_connection
-            .try_lock()
-            .unwrap()
-            .try_clone()
-            .unwrap();
-        if self.attached {
-            new_conn
-                .execute(format!("USE {UQ_ATTACHED_DB_NAME};").as_str(), [])
-                .unwrap();
-        }
-        new_conn
-    }
+pub trait UQueryEngine: Send + Sync {
+    /// Validate `sql` and return an executable handle or an error if the query
+    /// is invalid.
+    fn prepare(&self, sql: &str) -> Result<Box<dyn ExecutableQuery>, String>;
 }

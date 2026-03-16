@@ -8,8 +8,8 @@ axum = { version = "0.8" }
 tokio = {version="1.47",features = ["full"] }
 tokio-util = { version = "*",features = ["io","io-util"] }
 serde = { version = "1.0", features = ["derive"] }
-duckdb = { version = "1.4.4", features = ["extensions-full"] }
-arrow = {version = "56", features = ["arrow-json","arrow-csv","arrow-ipc","chrono-tz"]}
+duckdb = { version = "=1.4.4", features = ["extensions-full"] }
+arrow = { version = "56", features = ["arrow-json","arrow-csv","arrow-ipc","chrono-tz"] }
 serde_json = "1.0"
 futures-util = "0.3"
 tracing = "0.1"
