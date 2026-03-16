@@ -108,16 +108,21 @@ async fn query(
         }
     });
 
-    match ready_rx.await.unwrap() {
-        Ok(()) => Ok(Response::builder()
+    match ready_rx.await {
+        Ok(Ok(())) => Ok(Response::builder()
             .status(StatusCode::OK)
             .header(CONTENT_TYPE, content_type)
             .body(Body::from_stream(reader_stream))
             .unwrap()),
-        Err(err) => Err(UQueryError {
+        Ok(Err(err)) => Err(UQueryError {
             status_code: StatusCode::BAD_REQUEST.as_u16(),
             title: "SQL Error".to_string(),
             detail: err,
+        }),
+        Err(_) => Err(UQueryError {
+            status_code: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+            title: "Internal Error".to_string(),
+            detail: "Query execution task failed unexpectedly".to_string(),
         }),
     }
 }
