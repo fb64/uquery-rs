@@ -1,16 +1,15 @@
-use crate::core::engine::UQueryState;
+use crate::core::engine::UQueryEngine;
 use crate::core::error::UQueryError;
+use crate::web::consumers::{ArrowConsumer, WriterConsumer};
 use crate::web::request::QueryRequest;
 use crate::web::response::QueryResponseFormat;
 use crate::web::{
     CONTENT_TYPE_ANY, CONTENT_TYPE_ARROW, CONTENT_TYPE_CSV, CONTENT_TYPE_JSON, CONTENT_TYPE_JSONL,
     CONTENT_TYPE_JSONLINES,
 };
-
-use arrow::csv::Writer;
-use arrow::ipc::writer::StreamWriter;
+use arrow::csv::Writer as CsvWriter;
 use arrow::json::{ArrayWriter, LineDelimitedWriter};
-use arrow::record_batch::RecordBatchWriter;
+
 use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
@@ -18,17 +17,16 @@ use axum::http::header::{ACCEPT, CONTENT_TYPE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::post;
-use duckdb::Arrow;
 use std::sync::Arc;
+use tokio::sync::oneshot;
 use tokio::task::spawn_blocking;
-use tokio::time::Instant;
 use tokio_util::io::{ReaderStream, SyncIoBridge};
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
-use tracing::debug;
+use tracing::error;
 
-pub fn create_router(state: Arc<UQueryState>, cors_enabled: bool) -> Router {
+pub fn create_router(state: Arc<dyn UQueryEngine>, cors_enabled: bool) -> Router {
     let router = Router::new()
         .route("/", post(query))
         .with_state(state)
@@ -41,7 +39,7 @@ pub fn create_router(state: Arc<UQueryState>, cors_enabled: bool) -> Router {
 }
 
 async fn query(
-    State(state): State<Arc<UQueryState>>,
+    State(uq_engine): State<Arc<dyn UQueryEngine>>,
     headers: HeaderMap,
     query_request: QueryRequest,
 ) -> Result<Response, UQueryError> {
@@ -61,58 +59,57 @@ async fn query(
     })?;
 
     let content_type = format.to_string();
+    let sql = query_request.get_sql_query().to_string();
     let (tx, rx) = tokio::io::duplex(65_536);
     let reader_stream = ReaderStream::new(rx);
-    let (result_sender, result_receiver) = tokio::sync::oneshot::channel();
+    let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
 
     spawn_blocking(move || {
-        let bridge = SyncIoBridge::new(tx);
-        let query_start = Instant::now();
-        let conn = state.get_new_connection();
+        // Phase 1: validate — if the SQL is invalid, signal the error and fail.
+        let mut prepared = match uq_engine.prepare(&sql) {
+            Err(e) => {
+                let _ = ready_tx.send(Err(e));
+                return;
+            }
+            Ok(q) => q,
+        };
 
-        let statement = conn.prepare(query_request.get_sql_query());
-        match statement {
-            Ok(mut statement) => match statement.query_arrow([]) {
-                Ok(arrow) => {
-                    debug!(
-                        "run: [{}] in {:?}",
-                        query_request.get_sql_query(),
-                        query_start.elapsed()
-                    );
-                    let _ = result_sender.send(Ok::<(), String>(()));
-                    match format {
-                        QueryResponseFormat::Csv => {
-                            let writer = Writer::new(bridge);
-                            handle_response_write(writer, arrow);
-                        }
-                        QueryResponseFormat::Json => {
-                            let writer = ArrayWriter::new(bridge);
-                            handle_response_write(writer, arrow);
-                        }
-                        QueryResponseFormat::Arrow => {
-                            let writer =
-                                StreamWriter::try_new(bridge, &arrow.get_schema()).unwrap();
-                            handle_response_write(writer, arrow);
-                        }
-                        QueryResponseFormat::JsonLINES => {
-                            let writer = LineDelimitedWriter::new(bridge);
-                            handle_response_write(writer, arrow);
-                        }
-                    };
+        // Phase 2: query is valid — let the handler send the 200 and start
+        // draining the pipe before any batch is written, avoiding a deadlock
+        // when the response exceeds the duplex buffer size.
+        let _ = ready_tx.send(Ok(()));
+
+        // Phase 3: stream batches into the pipe.
+        let bridge = SyncIoBridge::new(tx);
+        match format {
+            QueryResponseFormat::Csv => {
+                if let Err(e) = prepared.execute(&mut WriterConsumer::new(CsvWriter::new(bridge))) {
+                    error!("CSV execution failed: {}", e);
                 }
-                Err(err) => {
-                    let _ = result_sender.send(Err(err.to_string()));
+            }
+            QueryResponseFormat::Json => {
+                if let Err(e) = prepared.execute(&mut WriterConsumer::new(ArrayWriter::new(bridge)))
+                {
+                    error!("Json execution failed: {}", e);
                 }
-            },
-            Err(err) => {
-                let _ = result_sender.send(Err(err.to_string()));
+            }
+            QueryResponseFormat::Arrow => {
+                if let Err(e) = prepared.execute(&mut ArrowConsumer::new(bridge)) {
+                    error!("Arrow execution failed: {}", e);
+                }
+            }
+            QueryResponseFormat::JsonLINES => {
+                if let Err(e) =
+                    prepared.execute(&mut WriterConsumer::new(LineDelimitedWriter::new(bridge)))
+                {
+                    error!("JsonLines execution failed: {}", e);
+                }
             }
         }
     });
 
-    let result = result_receiver.await.unwrap();
-    match result {
-        Ok(_) => Ok(axum::response::Response::builder()
+    match ready_rx.await.unwrap() {
+        Ok(()) => Ok(Response::builder()
             .status(StatusCode::OK)
             .header(CONTENT_TYPE, content_type)
             .body(Body::from_stream(reader_stream))
@@ -123,13 +120,6 @@ async fn query(
             detail: err,
         }),
     }
-}
-
-fn handle_response_write<W: RecordBatchWriter>(mut writer: W, data: Arrow) {
-    for rb in data {
-        writer.write(&rb).unwrap();
-    }
-    writer.close().unwrap();
 }
 
 fn get_first_compatible_format(headers: &HeaderMap) -> Option<QueryResponseFormat> {

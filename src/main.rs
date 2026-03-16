@@ -1,4 +1,5 @@
-use crate::core::engine::UQueryState;
+use crate::core::duckdb::DuckDbEngine;
+use crate::core::engine::UQueryEngine;
 use duckdb::Connection;
 use pingora::prelude::{Server, http_proxy_service};
 
@@ -20,7 +21,8 @@ fn main() {
     for init_query in cli_options.init_script() {
         conn.execute(init_query.as_str(), []).unwrap();
     }
-    let state = Arc::new(UQueryState::new(conn, cli_options.db_file.is_some()));
+    let engine: Arc<dyn UQueryEngine> =
+        Arc::new(DuckDbEngine::new(conn, cli_options.db_file.is_some()));
 
     let tk_runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -37,7 +39,7 @@ fn main() {
         let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
         info!("uQuery server started in {:?}", start.elapsed());
         debug!("listening on {}", addr);
-        let router = web::routers::create_router(state, cli_options.cors_enabled);
+        let router = web::routers::create_router(engine, cli_options.cors_enabled);
         axum::serve(listener, router)
             .with_graceful_shutdown(shutdown_signal())
             .await
@@ -84,8 +86,9 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use crate::UQueryState;
     use crate::cli::options::UQ_ATTACHED_DB_NAME;
+    use crate::core::duckdb::DuckDbEngine;
+    use crate::core::engine::UQueryEngine;
     use crate::web::request::QueryRequest;
     use crate::web::response::QueryResponseFormat;
     use crate::web::routers::create_router;
@@ -203,8 +206,8 @@ mod tests {
             [],
         )
         .unwrap();
-        let state = Arc::new(UQueryState::new(conn, true));
-        let response = create_router(state, false)
+        let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, true));
+        let response = create_router(engine, false)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
             .unwrap();
@@ -226,8 +229,8 @@ mod tests {
             .header(ORIGIN, "https://origin.com");
 
         let conn = Connection::open_in_memory().unwrap();
-        let state = Arc::new(UQueryState::new(conn, false));
-        let response = create_router(state, true)
+        let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, false));
+        let response = create_router(engine, true)
             .oneshot(builder.body(Body::empty()).unwrap())
             .await
             .unwrap();
@@ -390,8 +393,8 @@ mod tests {
             [],
         )
         .unwrap();
-        let state = Arc::new(UQueryState::new(conn, true));
-        let response = create_router(state, false)
+        let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, true));
+        let response = create_router(engine, false)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
             .unwrap();
@@ -406,6 +409,13 @@ mod tests {
             json_array[0].get("f_float").unwrap().as_f64().unwrap(),
             4.56
         );
+    }
+
+    fn make_engine(attached: bool) -> Arc<dyn UQueryEngine> {
+        Arc::new(DuckDbEngine::new(
+            Connection::open_in_memory().unwrap(),
+            attached,
+        ))
     }
 
     async fn perform_json_request(request: QueryRequest, format: QueryResponseFormat) -> Response {
@@ -427,9 +437,7 @@ mod tests {
         if compress {
             builder = builder.header(ACCEPT_ENCODING, "gzip");
         }
-        let conn = Connection::open_in_memory().unwrap();
-        let state = Arc::new(UQueryState::new(conn, false));
-        create_router(state, false)
+        create_router(make_engine(false), false)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
             .unwrap()
@@ -441,9 +449,7 @@ mod tests {
             .uri("/")
             .header(CONTENT_TYPE, "text/plain")
             .header(ACCEPT, format.to_string());
-        let conn = Connection::open_in_memory().unwrap();
-        let state = Arc::new(UQueryState::new(conn, false));
-        create_router(state, false)
+        create_router(make_engine(false), false)
             .oneshot(builder.body(Body::from(sql)).unwrap())
             .await
             .unwrap()
