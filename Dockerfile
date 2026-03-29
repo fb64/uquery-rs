@@ -11,17 +11,25 @@ LABEL org.opencontainers.image.authors="florian@flob.fr"
 LABEL org.opencontainers.image.source="https://github.com/fb64/uquery-rs"
 LABEL org.opencontainers.image.description="A lightweight server that provide a simple API to query good old data files (CSV, Json, Parquet ...) with SQL"
 
-## Install DuckDB and preload extensions
-RUN apt-get update &&  apt-get install --no-install-recommends -y ca-certificates curl unzip && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install --no-install-recommends -y ca-certificates curl unzip && rm -rf /var/lib/apt/lists/*
+
+# Create the runtime user before extension install so they land in its home directory
+RUN useradd -r -u 1000 -m -s /bin/false uquery
+
+## Install DuckDB and preload extensions as the runtime user
 RUN curl https://install.duckdb.org | sh \
-    && /root/.duckdb/cli/${DUCKDB_VERSION}/duckdb :memory: 'INSTALL httpfs' \
-    && /root/.duckdb/cli/${DUCKDB_VERSION}/duckdb :memory: 'INSTALL iceberg' \
-    && /root/.duckdb/cli/${DUCKDB_VERSION}/duckdb :memory: 'INSTALL ui' \
-    && /root/.duckdb/cli/${DUCKDB_VERSION}/duckdb :memory: 'INSTALL ducklake' \
-    && /root/.duckdb/cli/${DUCKDB_VERSION}/duckdb :memory: 'INSTALL gcs FROM community' \
-    && rm -rf /root/.duckdb/cli
+    && cp /root/.duckdb/cli/${DUCKDB_VERSION}/duckdb /usr/local/bin/duckdb \
+    && rm -rf /root/.duckdb/cli \
+    && su -s /bin/sh uquery -c " \
+        duckdb :memory: 'INSTALL httpfs' && \
+        duckdb :memory: 'INSTALL iceberg' && \
+        duckdb :memory: 'INSTALL ui' && \
+        duckdb :memory: 'INSTALL ducklake' && \
+        duckdb :memory: 'INSTALL gcs FROM community'" \
+    && rm /usr/local/bin/duckdb
 
 EXPOSE 8080
 COPY --from=builder /build/target/release/uquery /usr/local/bin/uquery
 WORKDIR /tmp
+USER uquery
 ENTRYPOINT ["uquery"]
