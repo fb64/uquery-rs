@@ -18,7 +18,7 @@ use axum::extract::State;
 use axum::http::header::{ACCEPT, CONTENT_TYPE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
-use axum::routing::post;
+use axum::routing::{get, post};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -72,6 +72,7 @@ pub fn create_router(
         query_timeout,
     });
     let router = Router::new()
+        .route("/health", get(|| async { StatusCode::OK }))
         .route("/", post(query))
         .with_state(state)
         .layer(ServiceBuilder::new().layer(CompressionLayer::new()));
