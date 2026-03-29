@@ -21,8 +21,9 @@ fn main() {
     for init_query in cli_options.init_script() {
         conn.execute(init_query.as_str(), []).unwrap();
     }
-    let engine: Arc<dyn UQueryEngine> =
-        Arc::new(DuckDbEngine::new(conn, cli_options.db_file.is_some()));
+    let engine: Arc<dyn UQueryEngine> = Arc::new(
+        DuckDbEngine::new(conn, cli_options.db_file.is_some(), cli_options.pool_size).unwrap(),
+    );
 
     let tk_runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -206,7 +207,8 @@ mod tests {
             [],
         )
         .unwrap();
-        let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, true));
+        let engine: Arc<dyn UQueryEngine> =
+            Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
         let response = create_router(engine, false)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
@@ -229,7 +231,8 @@ mod tests {
             .header(ORIGIN, "https://origin.com");
 
         let conn = Connection::open_in_memory().unwrap();
-        let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, false));
+        let engine: Arc<dyn UQueryEngine> =
+            Arc::new(DuckDbEngine::new(conn, false, 2).unwrap());
         let response = create_router(engine, true)
             .oneshot(builder.body(Body::empty()).unwrap())
             .await
@@ -393,7 +396,8 @@ mod tests {
             [],
         )
         .unwrap();
-        let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, true));
+        let engine: Arc<dyn UQueryEngine> =
+            Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
         let response = create_router(engine, false)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
@@ -412,10 +416,7 @@ mod tests {
     }
 
     fn make_engine(attached: bool) -> Arc<dyn UQueryEngine> {
-        Arc::new(DuckDbEngine::new(
-            Connection::open_in_memory().unwrap(),
-            attached,
-        ))
+        Arc::new(DuckDbEngine::new(Connection::open_in_memory().unwrap(), attached, 2).unwrap())
     }
 
     async fn perform_json_request(request: QueryRequest, format: QueryResponseFormat) -> Response {

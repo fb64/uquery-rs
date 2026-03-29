@@ -87,6 +87,10 @@ pub struct Options {
 
     #[arg(long, env = "UQ_ALLOWED_DIRECTORIES")]
     pub allowed_directories: Option<Vec<String>>,
+
+    /// Number of pre-cloned DuckDB connections kept in the pool
+    #[arg(default_value = "4", long, env = "UQ_POOL_SIZE")]
+    pub pool_size: usize,
 }
 
 impl Options {
@@ -198,6 +202,7 @@ mod tests {
             ic_user: None,
             ic_secret: None,
             allowed_directories: None,
+            pool_size: 4,
         }
     }
 
