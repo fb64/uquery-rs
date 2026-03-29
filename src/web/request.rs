@@ -38,7 +38,7 @@ where
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
 
-        let bytes = axum::body::to_bytes(body, usize::MAX)
+        let bytes = axum::body::to_bytes(body, 256 * 1024)
             .await
             .map_err(|e| UQueryError {
                 status_code: StatusCode::BAD_REQUEST.as_u16(),

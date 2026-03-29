@@ -104,7 +104,7 @@ async fn query(
 
     let content_type = format.to_string();
     let sql = query_request.get_sql_query().to_string();
-    let (tx, rx) = tokio::io::duplex(65_536);
+    let (tx, rx) = tokio::io::duplex(1024 * 1024);
     let reader_stream = ReaderStream::new(rx);
     let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
     let uq_engine = Arc::clone(&state.engine);

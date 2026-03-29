@@ -27,6 +27,8 @@ fn main() {
 
     let tk_runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        .worker_threads(2)
+        .max_blocking_threads(cli_options.pool_size * 2)
         .build()
         .unwrap();
 
