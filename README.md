@@ -38,9 +38,11 @@ Options:
   -v, --verbose...
           Verbose mode
       --gcs-key-id <GCS_KEY_ID>
-          Google Clous Storage Key ID [env: UQ_GCS_KEY_ID=]
+          Google Cloud Storage Key ID [env: UQ_GCS_KEY_ID=]
       --gcs-secret <GCS_SECRET>
-          Google Clous Storage Secret [env: UQ_GCS_SECRET=]
+          Google Cloud Storage Secret [env: UQ_GCS_SECRET=]
+      --gcs-credential-chain
+          Enable GCS Credential Chain [env: UQ_GCS_CREDENTIAL_CHAIN=]
   -d, --db-file <DB_FILE>
           DuckDB database file to attach in read only mode and use as default [env: UQ_DB_FILE=]
   -c, --cors-enabled
@@ -59,6 +61,12 @@ Options:
           Iceberg User [env: UQ_ICEBERG_USER=]
       --ic-secret <IC_SECRET>
           [env: UQ_ICEBERG_SECRET=]
+      --allowed-directories <ALLOWED_DIRECTORIES>
+          [env: UQ_ALLOWED_DIRECTORIES=]
+      --pool-size <POOL_SIZE>
+          Number of pre-cloned DuckDB connections kept in the pool [env: UQ_POOL_SIZE=] [default: 4]
+      --query-timeout-secs <QUERY_TIMEOUT_SECS>
+          Maximum query execution time in seconds (0 = no timeout) [env: UQ_QUERY_TIMEOUT=] [default: 30]
   -h, --help
           Print help
   -V, --version

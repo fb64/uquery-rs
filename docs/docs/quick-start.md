@@ -34,14 +34,48 @@ uquery
 ## Simple Query example
 
 ```shell
-#Run a query 
-curl --location 'http://localhost:8080' \
---header 'Accept: application/json' \
---header 'Content-Type: application/json' \
---data '{
-    "query":"select * from '\''https://raw.githubusercontent.com/duckdb/duckdb-web/main/data/weather.csv'\''"
-}'
+#Run a query
+curl -X POST http://localhost:8080 \
+  -H "Accept: application/json" \
+  -H "Content-Type: text/plain" \
+  -d "select * from 'https://raw.githubusercontent.com/duckdb/duckdb-web/main/data/weather.csv'"
 ```
+
+## Response Formats
+
+Control the output format with the `Accept` header:
+
+| Accept header | Format |
+|---|---|
+| `application/json` | JSON array (default) |
+| `application/jsonlines` | JSON Lines (one object per line) |
+| `text/csv` | CSV with header row |
+| `application/vnd.apache.arrow.stream` | Apache Arrow IPC stream |
+
+```shell
+# CSV output
+curl -X POST http://localhost:8080 \
+  -H "Content-Type: text/plain" \
+  -H "Accept: text/csv" \
+  -d "select * from 'https://raw.githubusercontent.com/duckdb/duckdb-web/main/data/weather.csv'"
+
+# Arrow IPC output
+curl -X POST http://localhost:8080 \
+  -H "Content-Type: text/plain" \
+  -H "Accept: application/vnd.apache.arrow.stream" \
+  -d "select * from 'https://raw.githubusercontent.com/duckdb/duckdb-web/main/data/weather.csv'" \
+  --output result.arrow
+```
+
+See [Response Formats](./response-formats.md) for details.
+
+## Health check
+
+```shell
+curl http://localhost:8080/health
+```
+
+Returns `200 OK` when the server is ready.
 
 ## Explore Options
 
@@ -57,9 +91,11 @@ Options:
   -v, --verbose...
           Verbose mode
       --gcs-key-id <GCS_KEY_ID>
-          Google Clous Storage Key ID [env: UQ_GCS_KEY_ID=]
+          Google Cloud Storage Key ID [env: UQ_GCS_KEY_ID=]
       --gcs-secret <GCS_SECRET>
-          Google Clous Storage Secret [env: UQ_GCS_SECRET=]
+          Google Cloud Storage Secret [env: UQ_GCS_SECRET=]
+      --gcs-credential-chain
+          Enable GCS Credential Chain [env: UQ_GCS_CREDENTIAL_CHAIN=]
   -d, --db-file <DB_FILE>
           DuckDB database file to attach in read only mode and use as default [env: UQ_DB_FILE=]
   -c, --cors-enabled
@@ -78,9 +114,17 @@ Options:
           Iceberg User [env: UQ_ICEBERG_USER=]
       --ic-secret <IC_SECRET>
           [env: UQ_ICEBERG_SECRET=]
+      --allowed-directories <ALLOWED_DIRECTORIES>
+          Restrict file access to specific directories [env: UQ_ALLOWED_DIRECTORIES=]
+      --pool-size <POOL_SIZE>
+          Number of pre-cloned DuckDB connections kept in the pool [env: UQ_POOL_SIZE=] [default: 4]
+      --query-timeout <QUERY_TIMEOUT>
+          Maximum query execution time in seconds (0 = no timeout) [env: UQ_QUERY_TIMEOUT=] [default: 30]
   -h, --help
           Print help
   -V, --version
           Print version
 ```
+
+See [Configuration](./configuration.md) for a full reference of all options.
 

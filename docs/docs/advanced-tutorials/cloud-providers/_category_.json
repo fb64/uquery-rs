@@ -1,6 +1,6 @@
 {
-  "label": "Advanced Tutorials",
-  "position": 5,
+  "label": "Cloud Providers",
+  "position": 4,
   "link": {
     "type": "generated-index"
   }
