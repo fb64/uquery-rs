@@ -23,3 +23,6 @@ pingora = {version = "0.8.0", features=["proxy"]}
 [dev-dependencies]
 polars = { version = "0.53"}
 polars-io = { version = "0.53",features = ["ipc_streaming","json"]}
+
+[profile.release]
+strip = true
