@@ -1,4 +1,4 @@
-FROM rust:1.90-slim-bookworm AS builder
+FROM rust:1.94-slim-bookworm AS builder
 RUN apt-get update && apt-get install --no-install-recommends -y build-essential cmake && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY ./Cargo.toml ./Cargo.lock ./
@@ -6,7 +6,7 @@ COPY ./src ./src
 RUN cargo build --release
 
 FROM debian:bookworm-slim
-ENV DUCKDB_VERSION="1.4.4"
+ENV DUCKDB_VERSION="1.5.1"
 LABEL org.opencontainers.image.authors="florian@flob.fr"
 LABEL org.opencontainers.image.source="https://github.com/fb64/uquery-rs"
 LABEL org.opencontainers.image.description="A lightweight server that provide a simple API to query good old data files (CSV, Json, Parquet ...) with SQL"
@@ -23,4 +23,5 @@ RUN curl https://install.duckdb.org | sh \
 
 EXPOSE 8080
 COPY --from=builder /build/target/release/uquery /usr/local/bin/uquery
+WORKDIR /tmp
 ENTRYPOINT ["uquery"]
