@@ -231,8 +231,7 @@ mod tests {
             [],
         )
         .unwrap();
-        let engine: Arc<dyn UQueryEngine> =
-            Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
+        let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
         let response = create_router(engine, false, None)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
@@ -255,8 +254,7 @@ mod tests {
             .header(ORIGIN, "https://origin.com");
 
         let conn = Connection::open_in_memory().unwrap();
-        let engine: Arc<dyn UQueryEngine> =
-            Arc::new(DuckDbEngine::new(conn, false, 2).unwrap());
+        let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, false, 2).unwrap());
         let response = create_router(engine, true, None)
             .oneshot(builder.body(Body::empty()).unwrap())
             .await
@@ -420,8 +418,7 @@ mod tests {
             [],
         )
         .unwrap();
-        let engine: Arc<dyn UQueryEngine> =
-            Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
+        let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
         let response = create_router(engine, false, None)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await

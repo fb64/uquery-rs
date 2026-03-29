@@ -135,8 +135,12 @@ async fn query(
             }};
         }
         match format {
-            QueryResponseFormat::Csv => stream_with_notifier!(WriterConsumer::new(CsvWriter::new(bridge))),
-            QueryResponseFormat::Json => stream_with_notifier!(WriterConsumer::new(ArrayWriter::new(bridge))),
+            QueryResponseFormat::Csv => {
+                stream_with_notifier!(WriterConsumer::new(CsvWriter::new(bridge)))
+            }
+            QueryResponseFormat::Json => {
+                stream_with_notifier!(WriterConsumer::new(ArrayWriter::new(bridge)))
+            }
             QueryResponseFormat::Arrow => stream_with_notifier!(ArrowConsumer::new(bridge)),
             QueryResponseFormat::JsonLINES => {
                 stream_with_notifier!(WriterConsumer::new(LineDelimitedWriter::new(bridge)))
@@ -147,13 +151,15 @@ async fn query(
     // Timeout covers the time from request start until the first batch is ready.
     // Once streaming begins, results are delivered to completion.
     let ready_result = match query_timeout {
-        Some(timeout) => tokio::time::timeout(timeout, ready_rx).await.map_err(|_| {
-            UQueryError {
-                status_code: StatusCode::REQUEST_TIMEOUT.as_u16(),
-                title: "Query Timeout".to_string(),
-                detail: format!("no result within {timeout:?}"),
-            }
-        })?,
+        Some(timeout) => {
+            tokio::time::timeout(timeout, ready_rx)
+                .await
+                .map_err(|_| UQueryError {
+                    status_code: StatusCode::REQUEST_TIMEOUT.as_u16(),
+                    title: "Query Timeout".to_string(),
+                    detail: format!("no result within {timeout:?}"),
+                })?
+        }
         None => ready_rx.await,
     };
 

@@ -1,5 +1,5 @@
-use std::env;
 use clap::Parser;
+use std::env;
 use tracing::metadata::LevelFilter;
 use tracing::warn;
 use tracing_subscriber::EnvFilter;
@@ -141,7 +141,7 @@ impl Options {
 
         let directories = self.get_allowed_directories();
         if !directories.is_empty() {
-            init_script.push(format!("SET allowed_directories = [{}];",directories));
+            init_script.push(format!("SET allowed_directories = [{}];", directories));
             init_script.push("SET enable_external_access=false;".to_string());
         }
 
@@ -214,7 +214,10 @@ mod tests {
     #[test]
     fn init_query_empty() {
         let options: Options = test_opts();
-        assert_eq!(options.init_script().last().unwrap(),"SET lock_configuration = true;")
+        assert_eq!(
+            options.init_script().last().unwrap(),
+            "SET lock_configuration = true;"
+        )
     }
 
     #[test]
@@ -300,6 +303,9 @@ mod tests {
         };
         assert!(options.init_script()[0].contains("'/home/test'"));
         assert!(options.init_script()[0].contains("'/tmp'"));
-        assert_eq!(options.init_script()[1], "SET enable_external_access=false;");
+        assert_eq!(
+            options.init_script()[1],
+            "SET enable_external_access=false;"
+        );
     }
 }
