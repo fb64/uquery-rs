@@ -58,13 +58,8 @@ impl DuckDbEngine {
 
 impl UQueryEngine for DuckDbEngine {
     fn prepare(&self, sql: &str) -> Result<Box<dyn ExecutableQuery>, String> {
-        let conn = self.pool.acquire();
-        if let Err(e) = conn.prepare(sql) {
-            self.pool.release(conn);
-            return Err(e.to_string());
-        }
         Ok(Box::new(DuckDbQuery {
-            conn: Some(conn),
+            conn: Some(self.pool.acquire()),
             pool: Arc::clone(&self.pool),
             sql: sql.to_string(),
         }))

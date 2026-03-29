@@ -111,51 +111,34 @@ async fn query(
     let query_timeout = state.query_timeout;
 
     spawn_blocking(move || {
-        // Phase 1: validate SQL.
-        let mut prepared = match uq_engine.prepare(&sql) {
-            Err(e) => {
-                let _ = ready_tx.send(Err(e));
-                return;
-            }
-            Ok(q) => q,
-        };
+        // acquire a connection and defer SQL parsing to execute() — single prepare.
+        let mut prepared = uq_engine.prepare(&sql).expect("pool acquire failed");
 
-        // Phase 2+3: execute. FirstBatchNotifier fires ready_tx when the first
-        // batch arrives (or on finish for empty results), then streaming
-        // continues to completion with no timeout.
+        // Execute. FirstBatchNotifier fires ready_tx on the first batch (or
+        // finish for empty results). If execute() fails before any batch is
+        // produced, ready_tx is still Some — we forward the error so the client
+        // gets a 400 instead of a dangling request.
         let bridge = SyncIoBridge::new(tx);
+        macro_rules! stream_with_notifier {
+            ($writer:expr) => {{
+                let mut notifier = FirstBatchNotifier {
+                    inner: $writer,
+                    ready_tx: Some(ready_tx),
+                };
+                if let Err(e) = prepared.execute(&mut notifier) {
+                    if let Some(tx) = notifier.ready_tx.take() {
+                        let _ = tx.send(Err(e.clone()));
+                    }
+                    error!("execution failed: {}", e);
+                }
+            }};
+        }
         match format {
-            QueryResponseFormat::Csv => {
-                if let Err(e) = prepared.execute(&mut FirstBatchNotifier {
-                    inner: WriterConsumer::new(CsvWriter::new(bridge)),
-                    ready_tx: Some(ready_tx),
-                }) {
-                    error!("CSV execution failed: {}", e);
-                }
-            }
-            QueryResponseFormat::Json => {
-                if let Err(e) = prepared.execute(&mut FirstBatchNotifier {
-                    inner: WriterConsumer::new(ArrayWriter::new(bridge)),
-                    ready_tx: Some(ready_tx),
-                }) {
-                    error!("Json execution failed: {}", e);
-                }
-            }
-            QueryResponseFormat::Arrow => {
-                if let Err(e) = prepared.execute(&mut FirstBatchNotifier {
-                    inner: ArrowConsumer::new(bridge),
-                    ready_tx: Some(ready_tx),
-                }) {
-                    error!("Arrow execution failed: {}", e);
-                }
-            }
+            QueryResponseFormat::Csv => stream_with_notifier!(WriterConsumer::new(CsvWriter::new(bridge))),
+            QueryResponseFormat::Json => stream_with_notifier!(WriterConsumer::new(ArrayWriter::new(bridge))),
+            QueryResponseFormat::Arrow => stream_with_notifier!(ArrowConsumer::new(bridge)),
             QueryResponseFormat::JsonLINES => {
-                if let Err(e) = prepared.execute(&mut FirstBatchNotifier {
-                    inner: WriterConsumer::new(LineDelimitedWriter::new(bridge)),
-                    ready_tx: Some(ready_tx),
-                }) {
-                    error!("JsonLines execution failed: {}", e);
-                }
+                stream_with_notifier!(WriterConsumer::new(LineDelimitedWriter::new(bridge)))
             }
         }
     });
