@@ -91,6 +91,10 @@ pub struct Options {
     /// Number of pre-cloned DuckDB connections kept in the pool
     #[arg(default_value = "4", long, env = "UQ_POOL_SIZE")]
     pub pool_size: usize,
+
+    /// Maximum query execution time in seconds (0 = no timeout)
+    #[arg(default_value = "30", long, env = "UQ_QUERY_TIMEOUT")]
+    pub query_timeout_secs: u64,
 }
 
 impl Options {
@@ -203,6 +207,7 @@ mod tests {
             ic_secret: None,
             allowed_directories: None,
             pool_size: 4,
+            query_timeout_secs: 30,
         }
     }
 

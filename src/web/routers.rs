@@ -1,4 +1,4 @@
-use crate::core::engine::UQueryEngine;
+use crate::core::engine::{RecordBatchConsumer, UQueryEngine};
 use crate::core::error::UQueryError;
 use crate::web::consumers::{ArrowConsumer, WriterConsumer};
 use crate::web::request::QueryRequest;
@@ -8,7 +8,9 @@ use crate::web::{
     CONTENT_TYPE_JSONLINES,
 };
 use arrow::csv::Writer as CsvWriter;
+use arrow::datatypes::SchemaRef;
 use arrow::json::{ArrayWriter, LineDelimitedWriter};
+use arrow::record_batch::RecordBatch;
 
 use axum::Router;
 use axum::body::Body;
@@ -18,6 +20,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::post;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::task::spawn_blocking;
 use tokio_util::io::{ReaderStream, SyncIoBridge};
@@ -26,7 +29,48 @@ use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tracing::error;
 
-pub fn create_router(state: Arc<dyn UQueryEngine>, cors_enabled: bool) -> Router {
+/// Wraps a consumer and fires `ready_tx` on the first batch (or on finish for
+/// empty results), signaling that DuckDB has produced its first result.
+struct FirstBatchNotifier<C: RecordBatchConsumer> {
+    inner: C,
+    ready_tx: Option<oneshot::Sender<Result<(), String>>>,
+}
+
+impl<C: RecordBatchConsumer> RecordBatchConsumer for FirstBatchNotifier<C> {
+    fn on_schema(&mut self, schema: SchemaRef) -> Result<(), String> {
+        self.inner.on_schema(schema)
+    }
+
+    fn on_batch(&mut self, batch: RecordBatch) -> Result<(), String> {
+        if let Some(tx) = self.ready_tx.take() {
+            let _ = tx.send(Ok(()));
+        }
+        self.inner.on_batch(batch)
+    }
+
+    fn finish(&mut self) -> Result<(), String> {
+        // Empty result set: no batches were produced, signal ready here.
+        if let Some(tx) = self.ready_tx.take() {
+            let _ = tx.send(Ok(()));
+        }
+        self.inner.finish()
+    }
+}
+
+pub struct UQueryState {
+    pub engine: Arc<dyn UQueryEngine>,
+    pub query_timeout: Option<Duration>,
+}
+
+pub fn create_router(
+    engine: Arc<dyn UQueryEngine>,
+    cors_enabled: bool,
+    query_timeout: Option<Duration>,
+) -> Router {
+    let state = Arc::new(UQueryState {
+        engine,
+        query_timeout,
+    });
     let router = Router::new()
         .route("/", post(query))
         .with_state(state)
@@ -39,7 +83,7 @@ pub fn create_router(state: Arc<dyn UQueryEngine>, cors_enabled: bool) -> Router
 }
 
 async fn query(
-    State(uq_engine): State<Arc<dyn UQueryEngine>>,
+    State(state): State<Arc<UQueryState>>,
     headers: HeaderMap,
     query_request: QueryRequest,
 ) -> Result<Response, UQueryError> {
@@ -63,9 +107,11 @@ async fn query(
     let (tx, rx) = tokio::io::duplex(65_536);
     let reader_stream = ReaderStream::new(rx);
     let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
+    let uq_engine = Arc::clone(&state.engine);
+    let query_timeout = state.query_timeout;
 
     spawn_blocking(move || {
-        // Phase 1: validate — if the SQL is invalid, signal the error and fail.
+        // Phase 1: validate SQL.
         let mut prepared = match uq_engine.prepare(&sql) {
             Err(e) => {
                 let _ = ready_tx.send(Err(e));
@@ -74,57 +120,82 @@ async fn query(
             Ok(q) => q,
         };
 
-        // Phase 2: query is valid — let the handler send the 200 and start
-        // draining the pipe before any batch is written, avoiding a deadlock
-        // when the response exceeds the duplex buffer size.
-        let _ = ready_tx.send(Ok(()));
-
-        // Phase 3: stream batches into the pipe.
+        // Phase 2+3: execute. FirstBatchNotifier fires ready_tx when the first
+        // batch arrives (or on finish for empty results), then streaming
+        // continues to completion with no timeout.
         let bridge = SyncIoBridge::new(tx);
         match format {
             QueryResponseFormat::Csv => {
-                if let Err(e) = prepared.execute(&mut WriterConsumer::new(CsvWriter::new(bridge))) {
+                if let Err(e) = prepared.execute(&mut FirstBatchNotifier {
+                    inner: WriterConsumer::new(CsvWriter::new(bridge)),
+                    ready_tx: Some(ready_tx),
+                }) {
                     error!("CSV execution failed: {}", e);
                 }
             }
             QueryResponseFormat::Json => {
-                if let Err(e) = prepared.execute(&mut WriterConsumer::new(ArrayWriter::new(bridge)))
-                {
+                if let Err(e) = prepared.execute(&mut FirstBatchNotifier {
+                    inner: WriterConsumer::new(ArrayWriter::new(bridge)),
+                    ready_tx: Some(ready_tx),
+                }) {
                     error!("Json execution failed: {}", e);
                 }
             }
             QueryResponseFormat::Arrow => {
-                if let Err(e) = prepared.execute(&mut ArrowConsumer::new(bridge)) {
+                if let Err(e) = prepared.execute(&mut FirstBatchNotifier {
+                    inner: ArrowConsumer::new(bridge),
+                    ready_tx: Some(ready_tx),
+                }) {
                     error!("Arrow execution failed: {}", e);
                 }
             }
             QueryResponseFormat::JsonLINES => {
-                if let Err(e) =
-                    prepared.execute(&mut WriterConsumer::new(LineDelimitedWriter::new(bridge)))
-                {
+                if let Err(e) = prepared.execute(&mut FirstBatchNotifier {
+                    inner: WriterConsumer::new(LineDelimitedWriter::new(bridge)),
+                    ready_tx: Some(ready_tx),
+                }) {
                     error!("JsonLines execution failed: {}", e);
                 }
             }
         }
     });
 
-    match ready_rx.await {
-        Ok(Ok(())) => Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header(CONTENT_TYPE, content_type)
-            .body(Body::from_stream(reader_stream))
-            .unwrap()),
-        Ok(Err(err)) => Err(UQueryError {
-            status_code: StatusCode::BAD_REQUEST.as_u16(),
-            title: "SQL Error".to_string(),
-            detail: err,
-        }),
-        Err(_) => Err(UQueryError {
-            status_code: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
-            title: "Internal Error".to_string(),
-            detail: "Query execution task failed unexpectedly".to_string(),
-        }),
+    // Timeout covers the time from request start until the first batch is ready.
+    // Once streaming begins, results are delivered to completion.
+    let ready_result = match query_timeout {
+        Some(timeout) => tokio::time::timeout(timeout, ready_rx).await.map_err(|_| {
+            UQueryError {
+                status_code: StatusCode::REQUEST_TIMEOUT.as_u16(),
+                title: "Query Timeout".to_string(),
+                detail: format!("no result within {timeout:?}"),
+            }
+        })?,
+        None => ready_rx.await,
+    };
+
+    match ready_result {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            return Err(UQueryError {
+                status_code: StatusCode::BAD_REQUEST.as_u16(),
+                title: "SQL Error".to_string(),
+                detail: err,
+            });
+        }
+        Err(_) => {
+            return Err(UQueryError {
+                status_code: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                title: "Internal Error".to_string(),
+                detail: "Query execution task failed unexpectedly".to_string(),
+            });
+        }
     }
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, content_type)
+        .body(Body::from_stream(reader_stream))
+        .unwrap())
 }
 
 fn get_first_compatible_format(headers: &HeaderMap) -> Option<QueryResponseFormat> {

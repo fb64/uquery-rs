@@ -40,7 +40,11 @@ fn main() {
         let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
         info!("uQuery server started in {:?}", start.elapsed());
         debug!("listening on {}", addr);
-        let router = web::routers::create_router(engine, cli_options.cors_enabled);
+        let query_timeout = match cli_options.query_timeout_secs {
+            0 => None,
+            secs => Some(std::time::Duration::from_secs(secs)),
+        };
+        let router = web::routers::create_router(engine, cli_options.cors_enabled, query_timeout);
         axum::serve(listener, router)
             .with_graceful_shutdown(shutdown_signal())
             .await
@@ -89,7 +93,7 @@ async fn shutdown_signal() {
 mod tests {
     use crate::cli::options::UQ_ATTACHED_DB_NAME;
     use crate::core::duckdb::DuckDbEngine;
-    use crate::core::engine::UQueryEngine;
+    use crate::core::engine::{ExecutableQuery, RecordBatchConsumer, UQueryEngine};
     use crate::web::request::QueryRequest;
     use crate::web::response::QueryResponseFormat;
     use crate::web::routers::create_router;
@@ -110,7 +114,25 @@ mod tests {
     use std::io::Cursor;
     use std::str::from_utf8;
     use std::sync::Arc;
+    use std::time::Duration;
     use tower::ServiceExt;
+
+    struct SlowEngine(Duration);
+
+    impl UQueryEngine for SlowEngine {
+        fn prepare(&self, _sql: &str) -> Result<Box<dyn ExecutableQuery>, String> {
+            std::thread::sleep(self.0);
+            Ok(Box::new(SlowQuery))
+        }
+    }
+
+    struct SlowQuery;
+
+    impl ExecutableQuery for SlowQuery {
+        fn execute(&mut self, consumer: &mut dyn RecordBatchConsumer) -> Result<(), String> {
+            consumer.finish()
+        }
+    }
 
     const TEST_QUERY: &str = "SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)";
 
@@ -209,7 +231,7 @@ mod tests {
         .unwrap();
         let engine: Arc<dyn UQueryEngine> =
             Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
-        let response = create_router(engine, false)
+        let response = create_router(engine, false, None)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
             .unwrap();
@@ -233,7 +255,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         let engine: Arc<dyn UQueryEngine> =
             Arc::new(DuckDbEngine::new(conn, false, 2).unwrap());
-        let response = create_router(engine, true)
+        let response = create_router(engine, true, None)
             .oneshot(builder.body(Body::empty()).unwrap())
             .await
             .unwrap();
@@ -398,7 +420,7 @@ mod tests {
         .unwrap();
         let engine: Arc<dyn UQueryEngine> =
             Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
-        let response = create_router(engine, false)
+        let response = create_router(engine, false, None)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
             .unwrap();
@@ -413,6 +435,25 @@ mod tests {
             json_array[0].get("f_float").unwrap().as_f64().unwrap(),
             4.56
         );
+    }
+
+    #[tokio::test]
+    async fn query_timeout_test() {
+        let engine: Arc<dyn UQueryEngine> = Arc::new(SlowEngine(Duration::from_millis(500)));
+        let request = Request::builder()
+            .method(http::Method::POST)
+            .uri("/")
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, QueryResponseFormat::Json.to_string())
+            .body(Body::from(
+                serde_json::to_string(&QueryRequest::new("SELECT 1".to_string())).unwrap(),
+            ))
+            .unwrap();
+        let response = create_router(engine, false, Some(Duration::from_millis(50)))
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
     }
 
     fn make_engine(attached: bool) -> Arc<dyn UQueryEngine> {
@@ -438,7 +479,7 @@ mod tests {
         if compress {
             builder = builder.header(ACCEPT_ENCODING, "gzip");
         }
-        create_router(make_engine(false), false)
+        create_router(make_engine(false), false, None)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
             .unwrap()
@@ -450,7 +491,7 @@ mod tests {
             .uri("/")
             .header(CONTENT_TYPE, "text/plain")
             .header(ACCEPT, format.to_string());
-        create_router(make_engine(false), false)
+        create_router(make_engine(false), false, None)
             .oneshot(builder.body(Body::from(sql)).unwrap())
             .await
             .unwrap()
