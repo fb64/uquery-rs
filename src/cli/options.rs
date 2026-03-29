@@ -1,5 +1,7 @@
+use std::env;
 use clap::Parser;
 use tracing::metadata::LevelFilter;
+use tracing::warn;
 use tracing_subscriber::EnvFilter;
 
 /// Attached database name
@@ -17,6 +19,9 @@ CREATE SECRET gcp_secret (TYPE gcp, PROVIDER credential_chain);"#;
 
 /// Start DuckDB UI
 const UQ_START_UI_SERVER: &str = "CALL start_ui_server();";
+
+/// Cloud allowed directory prefixes
+const CLOUD_PREFIXES: &[&str] = &["gcs://", "gs://", "gcss://", "s3://"];
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -79,6 +84,9 @@ pub struct Options {
 
     #[arg(long, env = "UQ_ICEBERG_SECRET")]
     pub ic_secret: Option<String>,
+
+    #[arg(long, env = "UQ_ALLOWED_DIRECTORIES")]
+    pub allowed_directories: Option<Vec<String>>,
 }
 
 impl Options {
@@ -123,7 +131,32 @@ impl Options {
             init_script.push(UQ_START_UI_SERVER.to_string());
         }
 
+        let directories = self.get_allowed_directories();
+        if !directories.is_empty() {
+            init_script.push(format!("SET allowed_directories = [{}];",directories));
+            init_script.push("SET enable_external_access=false;".to_string());
+        }
+
+        init_script.push("SET lock_configuration = true;".to_string());
         init_script
+    }
+
+    fn get_allowed_directories(&self) -> String {
+        let local_dirs: Vec<String> = self.allowed_directories.clone().unwrap_or_else(|| {
+            env::current_dir()
+                .map(|dir| vec![dir.to_string_lossy().into_owned()])
+                .unwrap_or_else(|e| {
+                    warn!("Failed to get current directory: {}", e);
+                    vec![]
+                })
+        });
+
+        CLOUD_PREFIXES
+            .iter()
+            .map(|s| format!("'{s}'"))
+            .chain(local_dirs.iter().map(|s| format!("'{s}'")))
+            .collect::<Vec<_>>()
+            .join(",")
     }
 }
 
@@ -164,13 +197,14 @@ mod tests {
             ic_catalog_name: None,
             ic_user: None,
             ic_secret: None,
+            allowed_directories: None,
         }
     }
 
     #[test]
     fn init_query_empty() {
         let options: Options = test_opts();
-        assert!(options.init_script().is_empty())
+        assert_eq!(options.init_script().last().unwrap(),"SET lock_configuration = true;")
     }
 
     #[test]
@@ -246,5 +280,16 @@ mod tests {
             options.init_script()[3],
             "ATTACH 'my_catalog' AS iceberg (TYPE iceberg, ENDPOINT 'https://anycatalog.com/api/catalog');"
         );
+    }
+
+    #[test]
+    fn init_allowed_directories() {
+        let options: Options = Options {
+            allowed_directories: Some(vec!["/home/test".to_string(), "/tmp".to_string()]),
+            ..test_opts()
+        };
+        assert!(options.init_script()[0].contains("'/home/test'"));
+        assert!(options.init_script()[0].contains("'/tmp'"));
+        assert_eq!(options.init_script()[1], "SET enable_external_access=false;");
     }
 }
