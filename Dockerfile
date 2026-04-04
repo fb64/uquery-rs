@@ -1,10 +1,3 @@
-FROM rust:1.94-slim-bookworm AS builder
-RUN apt-get update && apt-get install --no-install-recommends -y build-essential cmake && rm -rf /var/lib/apt/lists/*
-WORKDIR /build
-COPY ./Cargo.toml ./Cargo.lock ./
-COPY ./src ./src
-RUN cargo build --release
-
 FROM debian:bookworm-slim
 ENV DUCKDB_VERSION="1.5.1"
 LABEL org.opencontainers.image.authors="florian@flob.fr"
@@ -29,7 +22,8 @@ RUN curl https://install.duckdb.org | sh \
     && rm /usr/local/bin/duckdb
 
 EXPOSE 8080
-COPY --from=builder /build/target/release/uquery /usr/local/bin/uquery
+ARG TARGETARCH
+COPY bin/uquery-${TARGETARCH} /usr/local/bin/uquery
 WORKDIR /tmp
 USER uquery
 ENTRYPOINT ["uquery"]
