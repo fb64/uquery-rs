@@ -26,3 +26,4 @@ polars-io = { version = "0.53",features = ["ipc_streaming","json"]}
 
 [profile.release]
 strip = true
+lto = true
