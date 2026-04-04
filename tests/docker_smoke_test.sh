@@ -37,7 +37,8 @@ wait_ready() {
     sleep 1
   done
   echo ""
-  echo "Container did not become healthy in 30s."
+  echo "Container did not become healthy in 30s. Logs:"
+  docker logs "$CONTAINER" 2>&1 || true
   exit 1
 }
 
