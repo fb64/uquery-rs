@@ -30,14 +30,15 @@ echo -e "${BOLD}Image:${NC} $IMAGE"
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 wait_ready() {
-  local name="$1"
+  local name="$1" target="$2"
   echo -n "Waiting for $name..."
   for i in $(seq 1 30); do
     if curl -sf "$BASE_URL/health" >/dev/null 2>&1; then echo " ready."; return; fi
     sleep 1
   done
   echo ""
-  echo "Container did not become healthy in 30s."
+  echo "Container did not become healthy in 30s. Logs:"
+  docker logs "$target" 2>&1 || true
   exit 1
 }
 
@@ -98,7 +99,7 @@ docker run -d --name "$CONTAINER" \
   -v "$TESTS_DIR:/tmp/tests:ro" \
   "$IMAGE" >/dev/null
 
-wait_ready "container"
+wait_ready "container" "$CONTAINER"
 
 echo ""
 echo -e "${BOLD}Health${NC}"
@@ -141,7 +142,7 @@ docker run -d --name "${CONTAINER}-db" \
   -v "$TESTS_DIR:/tmp/tests:ro" \
   "$IMAGE" -d /tmp/tests/test.db >/dev/null
 
-wait_ready "container with DB"
+wait_ready "container with DB" "${CONTAINER}-db"
 post_body "attached DB: language table has 10 rows" '"count_star()":10' \
   -H "Accept: application/json" -d "SELECT count(*) FROM language"
 

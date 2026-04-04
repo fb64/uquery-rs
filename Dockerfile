@@ -1,4 +1,4 @@
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 ENV DUCKDB_VERSION="1.5.1"
 LABEL org.opencontainers.image.authors="florian@flob.fr"
 LABEL org.opencontainers.image.source="https://github.com/fb64/uquery-rs"
