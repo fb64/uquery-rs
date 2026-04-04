@@ -75,6 +75,18 @@ post_body() {
     -X POST "$BASE_URL" -H "Content-Type: text/plain" "$@"
 }
 
+post_content_type() {
+  local name="$1" expected="$2"; shift 2
+  local got
+  got=$(curl -s -o /dev/null -w "%{content_type}" \
+    -X POST "$BASE_URL" -H "Content-Type: text/plain" "$@")
+  if [ "$got" = "$expected" ]; then
+    pass "$name"
+  else
+    fail "$name (expected Content-Type '$expected', got '$got')"
+  fi
+}
+
 # ── Standard container ────────────────────────────────────────────────────────
 
 docker run -d --name "$CONTAINER" \
@@ -90,11 +102,11 @@ check_status "GET /health returns 200" 200 "$BASE_URL/health"
 
 echo ""
 echo -e "${BOLD}Response formats${NC}"
-post_status "JSON"                    200 -H "Accept: application/json"                    -d "SELECT 1 AS n"
-post_status "CSV"                     200 -H "Accept: text/csv"                            -d "SELECT 1 AS n"
-post_status "JSON Lines"              200 -H "Accept: application/jsonlines"               -d "SELECT 1 AS n"
-post_status "Arrow IPC"               200 -H "Accept: application/vnd.apache.arrow.stream" -d "SELECT 1 AS n"
-post_status "406 on unsupported type" 406 -H "Accept: application/xml"                     -d "SELECT 1"
+post_content_type "JSON"                    "application/json"                    -H "Accept: application/json"                    -d "SELECT 1 AS n"
+post_content_type "CSV"                     "text/csv"                            -H "Accept: text/csv"                            -d "SELECT 1 AS n"
+post_content_type "JSON Lines"              "application/jsonlines"               -H "Accept: application/jsonlines"               -d "SELECT 1 AS n"
+post_content_type "Arrow IPC"               "application/vnd.apache.arrow.stream" -H "Accept: application/vnd.apache.arrow.stream" -d "SELECT 1 AS n"
+post_status       "406 on unsupported type" 406                                   -H "Accept: application/xml"                     -d "SELECT 1"
 
 echo ""
 echo -e "${BOLD}Query correctness${NC}"
@@ -126,7 +138,8 @@ docker run -d --name "${CONTAINER}-db" \
   "$IMAGE" -d /tmp/tests/test.db >/dev/null
 
 wait_ready "container with DB"
-post_status "starts with attached DB" 200 -H "Accept: application/json" -d "SELECT 1"
+post_body "attached DB: language table has 10 rows" '"count_star()":10' \
+  -H "Accept: application/json" -d "SELECT count(*) FROM language"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
