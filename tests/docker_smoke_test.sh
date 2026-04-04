@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke tests against a freshly built µQuery Docker image.
-# Usage: ./tests/smoke.sh [image]
+# Usage: ./tests/docker_smoke_test.sh [image]
 # Default image: fb64/uquery
 set -euo pipefail
 
