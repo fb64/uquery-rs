@@ -1,8 +1,15 @@
 name: uQuery Release (binaries, docker)
 
-# Triggered on version tags or manually (manual runs build & test but skip publishing).
+# Triggered on version tags or manually.
+# Manual dispatch accepts an optional tag so a failed release can be retried
+# against an existing tag without creating a new one.
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to re-release (e.g. v0.6.0). Leave empty for a dry run.'
+        required: false
+        default: ''
   push:
     tags:
       - "v*.*.*"
@@ -94,7 +101,7 @@ jobs:
   # Each platform is tested on a native runner (no QEMU emulation).
   # Both must pass before the image is published.
   smoke-test:
-    name: Smoke test / ${{ matrix.arch }}
+    name: Docker - smoke test / ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     needs: build-linux
     strategy:
@@ -140,7 +147,7 @@ jobs:
   # ── Docker image ────────────────────────────────────────────────────────────
   # Smoke tests passed on both platforms — build the final multi-platform image and push.
   docker:
-    name: Docker
+    name: Docker - Final build
     runs-on: ubuntu-latest
     needs: smoke-test
 
@@ -199,13 +206,15 @@ jobs:
           cache-from: type=gha
 
   # ── GitHub Release ──────────────────────────────────────────────────────────
-  # Runs only on tags, after smoke tests pass (via docker) and all binaries are ready.
-  # Packages raw binaries into per-target tarballs before attaching to the release.
+  # Runs on tags or when a tag is supplied via workflow_dispatch.
+  # The release is created as a DRAFT so it can be reviewed before publishing.
+  # To retry a failed release without a new tag: re-trigger via workflow_dispatch
+  # and set the tag input (e.g. v0.6.0).
   github-release:
     name: GitHub Release
     runs-on: ubuntu-latest
     needs: [docker, build-macos]
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
 
     steps:
       - name: Download all binaries
@@ -224,7 +233,9 @@ jobs:
           tar -C artifacts/binary-macos-amd64  -czf release/uquery-x86_64-apple-darwin.tar.gz       uquery
           tar -C artifacts/binary-macos-arm64  -czf release/uquery-aarch64-apple-darwin.tar.gz      uquery
 
-      - name: Publish GitHub release
+      - name: Create draft GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          draft: true
           files: release/*.tar.gz
