@@ -54,9 +54,13 @@ check_status() {
 
 check_body() {
   local name="$1" pattern="$2"; shift 2
-  local body
-  body=$(curl -s "$@")
-  if echo "$body" | grep -q "$pattern"; then
+  local body status tmp
+  tmp=$(mktemp)
+  status=$(curl -s -o "$tmp" -w "%{http_code}" "$@")
+  body=$(cat "$tmp"); rm -f "$tmp"
+  if [ "$status" -ne 200 ]; then
+    fail "$name (expected HTTP 200, got $status)"
+  elif echo "$body" | grep -q "$pattern"; then
     pass "$name"
   else
     fail "$name (pattern '$pattern' not found in: $body)"
