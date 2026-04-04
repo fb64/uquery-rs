@@ -40,7 +40,7 @@ jobs:
       - name: Build
         run: cross build --release --target ${{ matrix.target }}
 
-      # Raw binary — docker job uses amd64/arm64, release job packages all three.
+      # Raw binary — smoke-test and docker jobs use amd64/arm64, release job packages all three.
       - uses: actions/upload-artifact@v4
         with:
           name: binary-linux-${{ matrix.arch }}
@@ -81,13 +81,59 @@ jobs:
           path: target/${{ matrix.target }}/release/uquery
           retention-days: 1
 
+  # ── Smoke tests ─────────────────────────────────────────────────────────────
+  # Each platform is tested on a native runner (no QEMU emulation).
+  # Both must pass before the image is published.
+  smoke-test:
+    name: Smoke test / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    needs: build-linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-linux-${{ matrix.arch }}
+          path: bin
+
+      # Dockerfile expects bin/uquery-<arch>; the artifact lands as bin/uquery.
+      - name: Prepare bin directory
+        run: |
+          mv bin/uquery bin/uquery-${{ matrix.arch }}
+          chmod +x bin/uquery-${{ matrix.arch }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build local image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: uquery:smoke-test
+
+      - name: Run smoke tests
+        run: |
+          chmod +x tests/docker_smoke_test.sh
+          tests/docker_smoke_test.sh uquery:smoke-test
+
   # ── Docker image ────────────────────────────────────────────────────────────
-  # Uses Dockerfile.ci (no Rust toolchain inside — copies pre-built binaries).
-  # Smoke tests run against a local amd64 image before anything is published.
+  # Smoke tests passed on both platforms — build the final multi-platform image and push.
   docker:
     name: Docker
     runs-on: ubuntu-latest
-    needs: build-linux
+    needs: smoke-test
 
     steps:
       - uses: actions/checkout@v4
@@ -113,7 +159,7 @@ jobs:
           path: bin
           merge-multiple: false
 
-      # Flatten artifact subdirectories into bin/uquery-<arch> as expected by Dockerfile.ci.
+      # Flatten artifact subdirectories into bin/uquery-<arch> as expected by Dockerfile.
       - name: Prepare bin directory
         run: |
           mv bin/binary-linux-amd64/uquery bin/uquery-amd64
@@ -132,22 +178,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Build a local amd64 image for smoke testing; cache layers for the push step.
-      - name: Build (local amd64 for smoke tests)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64
-          load: true
-          tags: uquery:smoke-test
-          cache-to: type=gha,mode=max
-
-      - name: Run smoke tests
-        run: |
-          chmod +x tests/docker_smoke_test.sh
-          tests/docker_smoke_test.sh uquery:smoke-test
-
-      # Push only on tag triggers; manual runs validate the build without publishing.
+      # Push only on tag triggers; manual runs validate the full pipeline without publishing.
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
@@ -155,6 +186,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ startsWith(github.ref, 'refs/tags/') }}
           tags: ${{ steps.meta.outputs.tags }}
+          cache-to: type=gha,mode=max
           cache-from: type=gha
 
   # ── GitHub Release ──────────────────────────────────────────────────────────
