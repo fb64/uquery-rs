@@ -1,0 +1,10 @@
+{
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "install.uquery.dev" }],
+      "destination": "https://uquery.dev/install.sh",
+      "permanent": false
+    }
+  ]
+}
