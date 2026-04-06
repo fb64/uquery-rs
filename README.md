@@ -13,7 +13,7 @@
 
 In summary, **µQuery** empowers data enthusiasts to work with legacy files efficiently, all while embracing  microservice & serverless approach. Dive into the world of µQuery and unlock seamless data exploration! :rocket:
 
-Full documentation is available here: https://uquery.flob.fr/
+Full documentation is available here: https://uquery.dev/
 
 ## Installation
 
