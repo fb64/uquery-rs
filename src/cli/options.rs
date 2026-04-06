@@ -23,6 +23,15 @@ const UQ_START_UI_SERVER: &str = "CALL start_ui_server();";
 /// Cloud allowed directory prefixes
 const CLOUD_PREFIXES: &[&str] = &["gcs://", "gs://", "gcss://", "s3://"];
 
+/// All known DuckDB extensions with their optional source repository.
+const ALL_EXTENSIONS: &[(&str, Option<&str>)] = &[
+    ("httpfs", None),
+    ("iceberg", None),
+    ("ui", None),
+    ("ducklake", None),
+    ("gcs", Some("community")),
+];
+
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 pub struct Options {
@@ -95,9 +104,52 @@ pub struct Options {
     /// Maximum query execution time in seconds (0 = no timeout)
     #[arg(default_value = "30", long, env = "UQ_QUERY_TIMEOUT")]
     pub query_timeout_secs: u64,
+
+    /// Install all DuckDB extensions and exit. Use this once after installation
+    /// to pre-download extensions so the server starts without network access.
+    #[arg(long, env = "UQ_INSTALL_EXTENSIONS")]
+    pub install_extensions: bool,
 }
 
 impl Options {
+    /// Returns SQL statements to INSTALL the DuckDB extensions required by the
+    /// current configuration. Safe to run on every start — DuckDB is a no-op
+    /// for extensions that are already installed.
+    pub fn install_script(&self) -> Vec<String> {
+        let mut needed: Vec<(&str, Option<&str>)> = Vec::new();
+
+        if self.aws_credential_chain || self.ic_catalog_endpoint.is_some() {
+            needed.push(("httpfs", None));
+        }
+        if self.ic_catalog_endpoint.is_some() {
+            needed.push(("iceberg", None));
+        }
+        if self.gcs_credential_chain || (self.gcs_key_id.is_some() && self.gcs_secret.is_some()) {
+            needed.push(("gcs", Some("community")));
+        }
+        if self.duckdb_ui {
+            needed.push(("ui", None));
+        }
+
+        Self::build_install_sql(&needed)
+    }
+
+    /// Returns SQL statements to INSTALL all known DuckDB extensions.
+    /// Used by the `--install-extensions` flag for one-time pre-warming.
+    pub fn all_extensions_script() -> Vec<String> {
+        Self::build_install_sql(ALL_EXTENSIONS)
+    }
+
+    fn build_install_sql(extensions: &[(&str, Option<&str>)]) -> Vec<String> {
+        extensions
+            .iter()
+            .map(|(name, source)| match source {
+                Some(src) => format!("INSTALL {name} FROM {src};"),
+                None => format!("INSTALL {name};"),
+            })
+            .collect()
+    }
+
     pub fn init_script(&self) -> Vec<String> {
         let key_opt = self.gcs_key_id.as_ref();
         let secret_opt = self.gcs_secret.as_ref();
@@ -208,6 +260,7 @@ mod tests {
             allowed_directories: None,
             pool_size: 4,
             query_timeout_secs: 30,
+            install_extensions: false,
         }
     }
 
@@ -307,5 +360,66 @@ mod tests {
             options.init_script()[1],
             "SET enable_external_access=false;"
         );
+    }
+
+    #[test]
+    fn install_script_empty() {
+        let options = test_opts();
+        assert!(options.install_script().is_empty());
+    }
+
+    #[test]
+    fn install_script_aws() {
+        let options = Options {
+            aws_credential_chain: true,
+            ..test_opts()
+        };
+        assert_eq!(options.install_script(), vec!["INSTALL httpfs;"]);
+    }
+
+    #[test]
+    fn install_script_iceberg() {
+        let options = Options {
+            ic_catalog_endpoint: Some("https://catalog.example.com".into()),
+            ic_catalog_name: Some("cat".into()),
+            ic_user: Some("u".into()),
+            ic_secret: Some("s".into()),
+            ..test_opts()
+        };
+        let script = options.install_script();
+        assert_eq!(script, vec!["INSTALL httpfs;", "INSTALL iceberg;"]);
+    }
+
+    #[test]
+    fn install_script_gcs_key() {
+        let options = Options {
+            gcs_key_id: Some("key".into()),
+            gcs_secret: Some("secret".into()),
+            ..test_opts()
+        };
+        assert_eq!(
+            options.install_script(),
+            vec!["INSTALL gcs FROM community;"]
+        );
+    }
+
+    #[test]
+    fn install_script_ui() {
+        let options = Options {
+            duckdb_ui: true,
+            ..test_opts()
+        };
+        assert_eq!(options.install_script(), vec!["INSTALL ui;"]);
+    }
+
+    #[test]
+    fn all_extensions_script_contains_all() {
+        let script = Options::all_extensions_script();
+        assert!(script.contains(&"INSTALL httpfs;".to_string()));
+        assert!(script.contains(&"INSTALL iceberg;".to_string()));
+        assert!(script.contains(&"INSTALL ui;".to_string()));
+        assert!(script.contains(&"INSTALL ducklake;".to_string()));
+        assert!(script.contains(&"INSTALL gcs FROM community;".to_string()));
+        assert_eq!(script.len(), ALL_EXTENSIONS.len());
     }
 }

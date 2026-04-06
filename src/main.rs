@@ -1,3 +1,4 @@
+use crate::cli::options::Options;
 use crate::core::duckdb::DuckDbEngine;
 use crate::core::engine::UQueryEngine;
 use duckdb::Connection;
@@ -18,6 +19,18 @@ fn main() {
     let start = Instant::now();
     let addr = format!("{}:{}", cli_options.addr, cli_options.port);
     let conn = Connection::open_in_memory().unwrap();
+
+    if cli_options.install_extensions {
+        for sql in Options::all_extensions_script() {
+            conn.execute(sql.as_str(), []).unwrap();
+        }
+        info!("All DuckDB extensions installed successfully.");
+        return;
+    }
+
+    for sql in cli_options.install_script() {
+        conn.execute(sql.as_str(), []).unwrap();
+    }
     for init_query in cli_options.init_script() {
         conn.execute(init_query.as_str(), []).unwrap();
     }
