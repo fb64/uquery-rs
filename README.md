@@ -4,7 +4,9 @@
 
 # µQuery
 
-**µQuery** (micro query) is a lightweight data querying solution designed for various file formats, including CSV, JSON, and Parquet. Developed in **Rust**, this micro-sized project harnesses the power of [DuckDB](https://duckdb.org/). Here’s a quick overview:
+**µQuery** (micro query) is a lightweight data querying solution designed for various file formats, including CSV, JSON, and Parquet. Developed in **Rust**, this micro-sized project harnesses the power of [DuckDB](https://duckdb.org/). 
+
+Here’s a quick overview:
 
 1. **Format-Agnostic**: µQuery seamlessly handles diverse data formats, making it easy to query and manipulate your files.
 2. **Serverless Deployment**: Deploy µQuery effortlessly on platforms like **AWS Lambda** or **Google Cloud Functions**. No infrastructure headaches—just focus on your data!
@@ -17,12 +19,66 @@ Full documentation is available here: https://uquery.dev/
 
 ## Installation
 
+```shell 
+curl -fsSL https://install.uquery.dev | sh
+```
+
+```shell
+# -f fail fast
+# -s silent
+# -L follow redirects https://install.uquery.dev --> https://uquery.dev/install.sh
+# -S show error messages
+```
+
+## Download binary
+
+Pre-built binaries are available on the [GitHub Releases](https://github.com/fb64/uquery-rs/releases/latest) page.
+
+> [!NOTE]  
+> Windows build is not available yet.
+
+| Platform | Architecture | Asset |
+|---|---|---|
+| macOS | Apple Silicon | `uquery-aarch64-apple-darwin.tar.gz` |
+| macOS | Intel | `uquery-x86_64-apple-darwin.tar.gz` |
+| Linux | x86_64 | `uquery-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux | ARM64 | `uquery-aarch64-unknown-linux-gnu.tar.gz` |
+| Linux | x86 (32-bit) | `uquery-i686-unknown-linux-gnu.tar.gz` |
+
+Once the binary is downloaded and added to your `PATH` you could run
+
+```shell
+# macOS (Apple Silicon)
+curl -fsSL https://github.com/fb64/uquery-rs/releases/latest/download/uquery-aarch64-apple-darwin.tar.gz | tar -xz
+# macOS (Intel)
+curl -fsSL https://github.com/fb64/uquery-rs/releases/latest/download/uquery-x86_64-apple-darwin.tar.gz | tar -xz
+# Linux (x86_64)
+curl -fsSL https://github.com/fb64/uquery-rs/releases/latest/download/uquery-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+# Linux (ARM64)
+curl -fsSL https://github.com/fb64/uquery-rs/releases/latest/download/uquery-aarch64-unknown-linux-gnu.tar.gz | tar -xz
+# Linux (x86 32-bit)
+curl -fsSL https://github.com/fb64/uquery-rs/releases/latest/download/uquery-i686-unknown-linux-gnu.tar.gz | tar -xz
+# Move to a directory in your PATH
+mv uquery /usr/local/bin/
+# Optional pre-install some required duckdb extensions for faster startup
+uquery --install-extensions
+# Start µQuery
+uquery
+```
+
+### Cargo
+
 [Rust toolchain](https://www.rust-lang.org/tools/install) must be installed
 
 Install with cargo:
 ```console
 cargo install --git https://github.com/fb64/uquery-rs
 ```
+
+### Docker
+
+µQuery image is available on [Docker Hub](https://hub.docker.com/r/fb64/uquery)
+
 
 ## Usage
 ### Command-line
@@ -67,6 +123,8 @@ Options:
           Number of pre-cloned DuckDB connections kept in the pool [env: UQ_POOL_SIZE=] [default: 4]
       --query-timeout-secs <QUERY_TIMEOUT_SECS>
           Maximum query execution time in seconds (0 = no timeout) [env: UQ_QUERY_TIMEOUT=] [default: 30]
+      --install-extensions
+          Install all DuckDB extensions and exit. Use this once after installation to pre-download extensions so the server starts without network access [env: UQ_INSTALL_EXTENSIONS=]
   -h, --help
           Print help
   -V, --version
