@@ -21,7 +21,7 @@ CREATE SECRET gcp_secret (TYPE gcp, PROVIDER credential_chain);"#;
 const UQ_START_UI_SERVER: &str = "CALL start_ui_server();";
 
 /// Cloud allowed directory prefixes
-const CLOUD_PREFIXES: &[&str] = &["gcs://", "gs://", "gcss://", "s3://"];
+const CLOUD_PREFIXES: &[&str] = &["https://", "gcs://", "gs://", "gcss://", "s3://"];
 
 /// All known DuckDB extensions with their optional source repository.
 const ALL_EXTENSIONS: &[(&str, Option<&str>)] = &[
@@ -118,9 +118,7 @@ impl Options {
     pub fn install_script(&self) -> Vec<String> {
         let mut needed: Vec<(&str, Option<&str>)> = Vec::new();
 
-        if self.aws_credential_chain || self.ic_catalog_endpoint.is_some() {
-            needed.push(("httpfs", None));
-        }
+        needed.push(("httpfs", None));
         if self.ic_catalog_endpoint.is_some() {
             needed.push(("iceberg", None));
         }
@@ -160,6 +158,8 @@ impl Options {
         let ic_secret = self.ic_secret.as_ref();
         let mut init_script = Vec::new();
 
+        init_script.push("LOAD httpfs;".to_string());
+
         if let (Some(key), Some(secret)) = (key_opt, secret_opt) {
             init_script.push(format!(
                 "CREATE SECRET gcs_secret (TYPE GCS, KEY_ID '{key}', SECRET '{secret}');"
@@ -175,7 +175,6 @@ impl Options {
         if let (Some(ic_catalog_endpoint), Some(ic_catalog_name), Some(ic_user), Some(ic_secret)) =
             (ic_catalog_endpoint, ic_catalog_name, ic_user, ic_secret)
         {
-            init_script.push("LOAD httpfs;".to_string()); // https://github.com/duckdb/duckdb-iceberg/issues/483
             init_script.push("LOAD iceberg;".to_string());
             init_script.push(format!("CREATE SECRET ic_secret (TYPE iceberg, CLIENT_ID '{ic_user}', CLIENT_SECRET '{ic_secret}', ENDPOINT '{ic_catalog_endpoint}');"));
             init_script.push(format!("ATTACH '{ic_catalog_name}' AS iceberg (TYPE iceberg, ENDPOINT '{ic_catalog_endpoint}');"));
@@ -267,6 +266,7 @@ mod tests {
     #[test]
     fn init_query_empty() {
         let options: Options = test_opts();
+        assert_eq!(options.init_script()[0], "LOAD httpfs;");
         assert_eq!(
             options.init_script().last().unwrap(),
             "SET lock_configuration = true;"
@@ -281,7 +281,7 @@ mod tests {
             ..test_opts()
         };
         assert_eq!(
-            options.init_script()[0],
+            options.init_script()[1],
             "CREATE SECRET gcs_secret (TYPE GCS, KEY_ID 'key_id', SECRET 'secret');"
         );
     }
@@ -292,7 +292,7 @@ mod tests {
             aws_credential_chain: true,
             ..test_opts()
         };
-        assert_eq!(options.init_script()[0], UQ_CREATE_AWS_CREDENTIAL_CHAIN);
+        assert_eq!(options.init_script()[1], UQ_CREATE_AWS_CREDENTIAL_CHAIN);
     }
 
     #[test]
@@ -303,7 +303,7 @@ mod tests {
             ..test_opts()
         };
         assert_eq!(
-            options.init_script()[0],
+            options.init_script()[1],
             "CREATE SECRET gcs_secret (TYPE GCS, KEY_ID 'key_id2', SECRET 'secret2');"
         );
     }
@@ -314,7 +314,7 @@ mod tests {
             gcs_credential_chain: true,
             ..test_opts()
         };
-        assert_eq!(options.init_script()[0], UQ_CREATE_GCP_CREDENTIAL_CHAIN);
+        assert_eq!(options.init_script()[1], UQ_CREATE_GCP_CREDENTIAL_CHAIN);
     }
 
     #[test]
@@ -324,7 +324,7 @@ mod tests {
             duckdb_ui_port: 14213,
             ..test_opts()
         };
-        assert_eq!(options.init_script()[0], UQ_START_UI_SERVER);
+        assert_eq!(options.init_script()[1], UQ_START_UI_SERVER);
     }
 
     #[test]
@@ -354,10 +354,10 @@ mod tests {
             allowed_directories: Some(vec!["/home/test".to_string(), "/tmp".to_string()]),
             ..test_opts()
         };
-        assert!(options.init_script()[0].contains("'/home/test'"));
-        assert!(options.init_script()[0].contains("'/tmp'"));
+        assert!(options.init_script()[1].contains("'/home/test'"));
+        assert!(options.init_script()[1].contains("'/tmp'"));
         assert_eq!(
-            options.init_script()[1],
+            options.init_script()[2],
             "SET enable_external_access=false;"
         );
     }
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn install_script_empty() {
         let options = test_opts();
-        assert!(options.install_script().is_empty());
+        assert_eq!(options.install_script(), vec!["INSTALL httpfs;"]);
     }
 
     #[test]
@@ -399,7 +399,7 @@ mod tests {
         };
         assert_eq!(
             options.install_script(),
-            vec!["INSTALL gcs FROM community;"]
+            vec!["INSTALL httpfs;", "INSTALL gcs FROM community;"]
         );
     }
 
@@ -409,7 +409,10 @@ mod tests {
             duckdb_ui: true,
             ..test_opts()
         };
-        assert_eq!(options.install_script(), vec!["INSTALL ui;"]);
+        assert_eq!(
+            options.install_script(),
+            vec!["INSTALL httpfs;", "INSTALL ui;"]
+        );
     }
 
     #[test]
