@@ -1,6 +1,6 @@
 FROM debian:trixie-slim
-ENV DUCKDB_VERSION="1.5.1"
-LABEL org.opencontainers.image.authors="florian@flob.fr"
+ENV DUCKDB_VERSION="1.5.2"
+LABEL org.opencontainers.image.authors="dev@uquery.dev"
 LABEL org.opencontainers.image.source="https://github.com/fb64/uquery-rs"
 LABEL org.opencontainers.image.description="A lightweight server that provide a simple API to query good old data files (CSV, Json, Parquet ...) with SQL"
 
