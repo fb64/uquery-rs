@@ -35,21 +35,19 @@ docker run -p 8080:8080 fb64/uquery
 
 Pre-built binaries are available on the [GitHub Releases](https://github.com/fb64/uquery-rs/releases/latest) page.
 
-:::note 
+| Platform | Architecture  | Asset                                     |
+|----------|---------------|-------------------------------------------|
+| macOS    | Apple Silicon | `uquery-aarch64-apple-darwin.tar.gz`      |
+| macOS    | Intel         | `uquery-x86_64-apple-darwin.tar.gz`       |
+| Linux    | x86_64        | `uquery-x86_64-unknown-linux-gnu.tar.gz`  |
+| Linux    | ARM64         | `uquery-aarch64-unknown-linux-gnu.tar.gz` |
+| Linux    | x86 (32-bit)  | `uquery-i686-unknown-linux-gnu.tar.gz`    |
+| Windows  | x86_64        | `uquery-x86_64-pc-windows-msvc.zip`       |
+| Windows  | ARM64         | `uquery-aarch64-pc-windows-msvc.zip`      |
 
-Windows build is not available yet.
+Once the binary is downloaded and added to your `PATH` you could run
 
-:::
-
-| Platform | Architecture | Asset |
-|---|---|---|
-| macOS | Apple Silicon | `uquery-aarch64-apple-darwin.tar.gz` |
-| macOS | Intel | `uquery-x86_64-apple-darwin.tar.gz` |
-| Linux | x86_64 | `uquery-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux | ARM64 | `uquery-aarch64-unknown-linux-gnu.tar.gz` |
-| Linux | x86 (32-bit) | `uquery-i686-unknown-linux-gnu.tar.gz` |
-
-Once the binary is downloaded and added to your `PATH` you could run 
+**macOS / Linux:**
 
 ```shell
 # macOS (Apple Silicon)
@@ -69,6 +67,21 @@ mv uquery /usr/local/bin/
 uquery --install-extensions
 # Start µQuery
 uquery
+```
+
+**Windows (PowerShell):**
+
+```powershell
+# Windows (x86_64)
+Invoke-WebRequest -Uri https://github.com/fb64/uquery-rs/releases/latest/download/uquery-x86_64-pc-windows-msvc.zip -OutFile uquery.zip
+# Windows (ARM64)
+Invoke-WebRequest -Uri https://github.com/fb64/uquery-rs/releases/latest/download/uquery-aarch64-pc-windows-msvc.zip -OutFile uquery.zip
+
+Expand-Archive uquery.zip -DestinationPath .
+# Optional pre-install some required duckdb extensions
+.\uquery.exe --install-extensions
+# Start µQuery
+.\uquery.exe
 ```
 
 ### With Cargo
@@ -98,12 +111,12 @@ curl -X POST http://localhost:8080 \
 
 Control the output format with the `Accept` header:
 
-| Accept header | Format |
-|---|---|
-| `application/json` | JSON array (default) |
-| `application/jsonlines` | JSON Lines (one object per line) |
-| `text/csv` | CSV with header row |
-| `application/vnd.apache.arrow.stream` | Apache Arrow IPC stream |
+| Accept header                         | Format                           |
+|---------------------------------------|----------------------------------|
+| `application/json`                    | JSON array (default)             |
+| `application/jsonlines`               | JSON Lines (one object per line) |
+| `text/csv`                            | CSV with header row              |
+| `application/vnd.apache.arrow.stream` | Apache Arrow IPC stream          |
 
 ```shell
 # CSV output
