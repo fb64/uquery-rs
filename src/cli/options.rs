@@ -109,6 +109,15 @@ pub struct Options {
     /// to pre-download extensions so the server starts without network access.
     #[arg(long, env = "UQ_INSTALL_EXTENSIONS")]
     pub install_extensions: bool,
+
+    /// Compress Arrow IPC responses with zstd instead of relying on the outer HTTP gzip layer
+    #[arg(
+        long,
+        env = "UQ_ARROW_COMPRESSION",
+        default_value_t = true,
+        action = clap::ArgAction::Set
+    )]
+    pub arrow_compression: bool,
 }
 
 impl Options {
@@ -260,6 +269,7 @@ mod tests {
             pool_size: 4,
             query_timeout_secs: 30,
             install_extensions: false,
+            arrow_compression: true,
         }
     }
 

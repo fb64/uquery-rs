@@ -59,7 +59,12 @@ fn main() {
             0 => None,
             secs => Some(std::time::Duration::from_secs(secs)),
         };
-        let router = web::routers::create_router(engine, cli_options.cors_enabled, query_timeout);
+        let router = web::routers::create_router(
+            engine,
+            cli_options.cors_enabled,
+            query_timeout,
+            cli_options.arrow_compression,
+        );
         axum::serve(listener, router)
             .with_graceful_shutdown(shutdown_signal())
             .await
@@ -213,6 +218,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn query_arrow_compression_disabled_test() -> Result<(), PolarsError> {
+        let request = Request::builder()
+            .method(http::Method::POST)
+            .uri("/")
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, QueryResponseFormat::Arrow.to_string())
+            .header(ACCEPT_ENCODING, "gzip")
+            .body(Body::from(
+                serde_json::to_string(&QueryRequest::new(TEST_QUERY.to_string())).unwrap(),
+            ))
+            .unwrap();
+        let response = create_router(make_engine(false), false, None, false)
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        // Disabled Arrow compression falls back to the outer gzip layer.
+        assert_eq!(response.headers().get(CONTENT_ENCODING).unwrap(), "gzip");
+        let result = read_response(response).await;
+        assert_eq!(result[0], 0x1fu8);
+        assert_eq!(result[1], 0x8bu8);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn query_arrow_compression_enabled_skips_outer_gzip_test() -> Result<(), PolarsError> {
+        let request = Request::builder()
+            .method(http::Method::POST)
+            .uri("/")
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, QueryResponseFormat::Arrow.to_string())
+            .header(ACCEPT_ENCODING, "gzip")
+            .body(Body::from(
+                serde_json::to_string(&QueryRequest::new(TEST_QUERY.to_string())).unwrap(),
+            ))
+            .unwrap();
+        let response = create_router(make_engine(false), false, None, true)
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        // Arrow self-compresses with zstd, so the outer gzip layer must skip it.
+        assert!(response.headers().get(CONTENT_ENCODING).is_none());
+        let result = read_response(response).await;
+        let df = IpcStreamReader::new(Cursor::new(result)).finish()?;
+        assert_eq!(df.column("Id")?.i32()?.get(0).unwrap(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn query_json_gzip_test() {
         let response = perform_json_request_compress(
             QueryRequest::new(TEST_QUERY.to_string()),
@@ -245,7 +300,7 @@ mod tests {
         )
         .unwrap();
         let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
-        let response = create_router(engine, false, None)
+        let response = create_router(engine, false, None, true)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
             .unwrap();
@@ -268,7 +323,7 @@ mod tests {
 
         let conn = Connection::open_in_memory().unwrap();
         let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, false, 2).unwrap());
-        let response = create_router(engine, true, None)
+        let response = create_router(engine, true, None, true)
             .oneshot(builder.body(Body::empty()).unwrap())
             .await
             .unwrap();
@@ -432,7 +487,7 @@ mod tests {
         )
         .unwrap();
         let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
-        let response = create_router(engine, false, None)
+        let response = create_router(engine, false, None, true)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
             .unwrap();
@@ -461,7 +516,7 @@ mod tests {
                 serde_json::to_string(&QueryRequest::new("SELECT 1".to_string())).unwrap(),
             ))
             .unwrap();
-        let response = create_router(engine, false, Some(Duration::from_millis(50)))
+        let response = create_router(engine, false, Some(Duration::from_millis(50)), true)
             .oneshot(request)
             .await
             .unwrap();
@@ -491,7 +546,7 @@ mod tests {
         if compress {
             builder = builder.header(ACCEPT_ENCODING, "gzip");
         }
-        create_router(make_engine(false), false, None)
+        create_router(make_engine(false), false, None, true)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
             .unwrap()
@@ -503,7 +558,7 @@ mod tests {
             .uri("/")
             .header(CONTENT_TYPE, "text/plain")
             .header(ACCEPT, format.to_string());
-        create_router(make_engine(false), false, None)
+        create_router(make_engine(false), false, None, true)
             .oneshot(builder.body(Body::from(sql)).unwrap())
             .await
             .unwrap()

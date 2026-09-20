@@ -26,6 +26,7 @@ use tokio::task::spawn_blocking;
 use tokio_util::io::{ReaderStream, SyncIoBridge};
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
+use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 use tower_http::cors::CorsLayer;
 use tracing::error;
 
@@ -60,22 +61,35 @@ impl<C: RecordBatchConsumer> RecordBatchConsumer for FirstBatchNotifier<C> {
 pub struct UQueryState {
     pub engine: Arc<dyn UQueryEngine>,
     pub query_timeout: Option<Duration>,
+    pub arrow_compression: bool,
 }
 
 pub fn create_router(
     engine: Arc<dyn UQueryEngine>,
     cors_enabled: bool,
     query_timeout: Option<Duration>,
+    arrow_compression: bool,
 ) -> Router {
     let state = Arc::new(UQueryState {
         engine,
         query_timeout,
+        arrow_compression,
     });
     let router = Router::new()
         .route("/health", get(|| async { StatusCode::OK }))
         .route("/", post(query))
-        .with_state(state)
-        .layer(ServiceBuilder::new().layer(CompressionLayer::new()));
+        .with_state(state);
+    // When Arrow responses compress themselves (zstd), exclude them from the outer gzip
+    // layer; otherwise let the outer layer compress them like any other format.
+    let router = if arrow_compression {
+        router.layer(
+            ServiceBuilder::new().layer(CompressionLayer::new().compress_when(
+                DefaultPredicate::new().and(NotForContentType::const_new(CONTENT_TYPE_ARROW)),
+            )),
+        )
+    } else {
+        router.layer(ServiceBuilder::new().layer(CompressionLayer::new()))
+    };
     if cors_enabled {
         router.layer(CorsLayer::permissive())
     } else {
@@ -110,6 +124,7 @@ async fn query(
     let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
     let uq_engine = Arc::clone(&state.engine);
     let query_timeout = state.query_timeout;
+    let arrow_compression = state.arrow_compression;
 
     spawn_blocking(move || {
         // acquire a connection and defer SQL parsing to execute() — single prepare.
@@ -141,7 +156,9 @@ async fn query(
             QueryResponseFormat::Json => {
                 stream_with_notifier!(WriterConsumer::new(ArrayWriter::new(bridge)))
             }
-            QueryResponseFormat::Arrow => stream_with_notifier!(ArrowConsumer::new(bridge)),
+            QueryResponseFormat::Arrow => {
+                stream_with_notifier!(ArrowConsumer::new(bridge, arrow_compression))
+            }
             QueryResponseFormat::JsonLINES => {
                 stream_with_notifier!(WriterConsumer::new(LineDelimitedWriter::new(bridge)))
             }
