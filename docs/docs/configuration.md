@@ -16,6 +16,7 @@ title: Configuration
 | `--cors-enabled` | `UQ_CORS_ENABLED` | `false` | Enable permissive CORS (all origins) |
 | `--pool-size` | `UQ_POOL_SIZE` | `4` | Number of concurrent DuckDB connections |
 | `--query-timeout` | `UQ_QUERY_TIMEOUT` | `30` | Seconds until a query times out (0 = disabled) |
+| `--arrow-compression` | `UQ_ARROW_COMPRESSION` | `true` | Compress Arrow IPC responses with zstd instead of the outer HTTP gzip layer |
 
 ### Pool size
 
@@ -35,6 +36,16 @@ Set to `0` to disable:
 
 ```bash
 docker run -p 8080:8080 -e UQ_QUERY_TIMEOUT=0 fb64/uquery
+```
+
+### Arrow compression
+
+`UQ_ARROW_COMPRESSION` controls whether [Arrow IPC](./response-formats.md#apache-arrow-ipc) responses are compressed with zstd at the Arrow level. It's enabled by default, which also skips the outer HTTP gzip layer for Arrow responses since the payload is already compressed.
+
+Disable it to fall back to the outer gzip layer instead (e.g. for clients that decode gzip but not zstd-compressed Arrow IPC):
+
+```bash
+docker run -p 8080:8080 -e UQ_ARROW_COMPRESSION=false fb64/uquery
 ```
 
 ---

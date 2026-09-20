@@ -94,6 +94,8 @@ df = pl.read_ipc_stream("result.arrow")
 print(df)
 ```
 
+By default, Arrow IPC responses are compressed with zstd at the Arrow level rather than relying on the outer HTTP gzip layer. See [`UQ_ARROW_COMPRESSION`](./configuration.md#arrow-compression) to disable this.
+
 ## Streaming behaviour
 
 All formats are streamed incrementally. µQuery begins writing the response as soon as the first result batch is available — there is no buffering of the full result set. This means:
