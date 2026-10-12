@@ -1,6 +1,7 @@
 ---
 sidebar_position: 2
 title: Quick Start
+description: Install uQuery with one command, Docker or Cargo, start the server and run your first SQL query over HTTP in less than 5 minutes.
 ---
 
 # Quick Start

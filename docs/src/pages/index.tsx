@@ -61,8 +61,8 @@ export default function Home(): JSX.Element {
   const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
-      title={`${siteConfig.title} Documentation`}
-      description="µQuery (micro query) is a lightweight data querying solution designed for various file formats, including CSV, JSON, and Parquet.">
+      title="SQL over HTTP for CSV, Parquet & JSON files"
+      description="uQuery is a lightweight HTTP API to query CSV, JSON, Parquet and Excel files with SQL. Powered by DuckDB, built in Rust.">
       <HomepageHeader />
       <main>
         <HomepageFeatures />

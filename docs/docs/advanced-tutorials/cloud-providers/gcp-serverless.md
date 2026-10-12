@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
 title: GCP Serverless
+description: Deploy uQuery on Google Cloud Run with a dedicated service account, then query Parquet files stored in Cloud Storage with SQL over HTTP.
 ---
 
 # Deploy µQuery on GCP Cloud Run

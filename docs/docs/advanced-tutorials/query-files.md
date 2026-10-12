@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
 title: Query files
+description: Query local and remote Parquet files with SQL over HTTP using uQuery and DuckDB, with the NYC Yellow Taxi dataset as an example.
 ---
 
 # Query files

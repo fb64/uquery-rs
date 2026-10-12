@@ -1,6 +1,7 @@
 ---
 sidebar_position: 3
 title: Response Formats
+description: Get uQuery results as JSON, JSON Lines, CSV or Apache Arrow IPC. The format is negotiated from the HTTP Accept header and streamed.
 ---
 
 # Response Formats

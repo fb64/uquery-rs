@@ -1,6 +1,7 @@
 ---
 sidebar_position: 2
 title: Custom Database
+description: Attach a read-only DuckDB database to uQuery at startup to expose predefined macros and macro tables to your SQL queries.
 ---
 
 # Custom Database
