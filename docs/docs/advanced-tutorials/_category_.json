@@ -2,6 +2,7 @@
   "label": "Advanced Tutorials",
   "position": 5,
   "link": {
-    "type": "generated-index"
+    "type": "generated-index",
+    "description": "Step-by-step uQuery tutorials: query Parquet and CSV files, attach a custom DuckDB database, and deploy on Kubernetes, AWS Lambda or GCP Cloud Run."
   }
 }

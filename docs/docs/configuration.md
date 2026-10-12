@@ -1,6 +1,7 @@
 ---
 sidebar_position: 4
 title: Configuration
+description: "All uQuery CLI flags and UQ_* environment variables: port, connection pool, query timeout, S3 and GCS credentials, Iceberg and DuckDB UI."
 ---
 
 # Configuration

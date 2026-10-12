@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
 title: Introduction
+description: uQuery is a lightweight HTTP API to query CSV, JSON, Parquet and Excel files with SQL, powered by DuckDB and built in Rust.
 ---
 
 # Introduction

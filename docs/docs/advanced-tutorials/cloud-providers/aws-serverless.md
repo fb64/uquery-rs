@@ -1,6 +1,7 @@
 ---
 sidebar_position: 2
 title: AWS Serverless
+description: Deploy uQuery on AWS Lambda with a container image and a Function URL, then query Parquet files stored in S3 with SQL over HTTP.
 ---
 
 # Deploy µQuery on AWS Lambda

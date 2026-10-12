@@ -1,6 +1,7 @@
 ---
 sidebar_position: 5
 title: Kubernetes
+description: Deploy uQuery on Kubernetes with a Deployment, Service and Ingress, health checks, cloud storage credentials and autoscaling.
 ---
 
 # Deploy µQuery on Kubernetes
