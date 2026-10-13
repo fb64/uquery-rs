@@ -2,13 +2,14 @@ use crate::core::engine::{RecordBatchConsumer, UQueryEngine};
 use crate::core::error::UQueryError;
 use crate::web::consumers::{ArrowConsumer, WriterConsumer};
 use crate::web::request::QueryRequest;
-use crate::web::response::QueryResponseFormat;
+use crate::web::response::{ArrowCodec, QueryResponseFormat};
 use crate::web::{
-    CONTENT_TYPE_ANY, CONTENT_TYPE_ARROW, CONTENT_TYPE_CSV, CONTENT_TYPE_JSON, CONTENT_TYPE_JSONL,
-    CONTENT_TYPE_JSONLINES,
+    CONTENT_TYPE_ANY, CONTENT_TYPE_ARROW, CONTENT_TYPE_ARROW_WITH_CODECS, CONTENT_TYPE_CSV,
+    CONTENT_TYPE_JSON, CONTENT_TYPE_JSONL, CONTENT_TYPE_JSONLINES,
 };
 use arrow::csv::Writer as CsvWriter;
 use arrow::datatypes::SchemaRef;
+use arrow::ipc::CompressionType;
 use arrow::json::{ArrayWriter, LineDelimitedWriter};
 use arrow::record_batch::RecordBatch;
 
@@ -61,35 +62,31 @@ impl<C: RecordBatchConsumer> RecordBatchConsumer for FirstBatchNotifier<C> {
 pub struct UQueryState {
     pub engine: Arc<dyn UQueryEngine>,
     pub query_timeout: Option<Duration>,
-    pub arrow_compression: bool,
 }
 
 pub fn create_router(
     engine: Arc<dyn UQueryEngine>,
     cors_enabled: bool,
     query_timeout: Option<Duration>,
-    arrow_compression: bool,
 ) -> Router {
     let state = Arc::new(UQueryState {
         engine,
         query_timeout,
-        arrow_compression,
     });
+    // Arrow responses with negotiated IPC buffer compression are already compressed,
+    // so the outer gzip layer skips them.
     let router = Router::new()
         .route("/health", get(|| async { StatusCode::OK }))
         .route("/", post(query))
-        .with_state(state);
-    // When Arrow responses compress themselves (zstd), exclude them from the outer gzip
-    // layer; otherwise let the outer layer compress them like any other format.
-    let router = if arrow_compression {
-        router.layer(
-            ServiceBuilder::new().layer(CompressionLayer::new().compress_when(
-                DefaultPredicate::new().and(NotForContentType::const_new(CONTENT_TYPE_ARROW)),
-            )),
-        )
-    } else {
-        router.layer(ServiceBuilder::new().layer(CompressionLayer::new()))
-    };
+        .with_state(state)
+        .layer(
+            ServiceBuilder::new().layer(
+                CompressionLayer::new().compress_when(
+                    DefaultPredicate::new()
+                        .and(NotForContentType::const_new(CONTENT_TYPE_ARROW_WITH_CODECS)),
+                ),
+            ),
+        );
     if cors_enabled {
         router.layer(CorsLayer::permissive())
     } else {
@@ -124,7 +121,6 @@ async fn query(
     let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
     let uq_engine = Arc::clone(&state.engine);
     let query_timeout = state.query_timeout;
-    let arrow_compression = state.arrow_compression;
 
     spawn_blocking(move || {
         // acquire a connection and defer SQL parsing to execute() — single prepare.
@@ -156,8 +152,8 @@ async fn query(
             QueryResponseFormat::Json => {
                 stream_with_notifier!(WriterConsumer::new(ArrayWriter::new(bridge)))
             }
-            QueryResponseFormat::Arrow => {
-                stream_with_notifier!(ArrowConsumer::new(bridge, arrow_compression))
+            QueryResponseFormat::Arrow(codec) => {
+                stream_with_notifier!(ArrowConsumer::new(bridge, codec.map(CompressionType::from)))
             }
             QueryResponseFormat::JsonLINES => {
                 stream_with_notifier!(WriterConsumer::new(LineDelimitedWriter::new(bridge)))
@@ -207,18 +203,41 @@ async fn query(
 
 fn get_first_compatible_format(headers: &HeaderMap) -> Option<QueryResponseFormat> {
     let accept_value = headers.get(ACCEPT)?.to_str().unwrap().to_lowercase();
-    for format in accept_value.split(",").collect::<Vec<&str>>() {
-        match format {
-            CONTENT_TYPE_JSON | CONTENT_TYPE_ANY => return Some(QueryResponseFormat::Json),
-            CONTENT_TYPE_CSV => return Some(QueryResponseFormat::Csv),
-            CONTENT_TYPE_ARROW => return Some(QueryResponseFormat::Arrow),
-            CONTENT_TYPE_JSONLINES | CONTENT_TYPE_JSONL => {
-                return Some(QueryResponseFormat::JsonLINES);
-            }
-            _ => {}
-        };
-    }
-    None
+    split_unquoted(&accept_value, ',').find_map(|media_range| {
+        let mut parts = split_unquoted(media_range, ';');
+        match parts.next()?.trim() {
+            CONTENT_TYPE_JSON | CONTENT_TYPE_ANY => Some(QueryResponseFormat::Json),
+            CONTENT_TYPE_CSV => Some(QueryResponseFormat::Csv),
+            CONTENT_TYPE_ARROW => Some(QueryResponseFormat::Arrow(negotiate_arrow_codec(parts))),
+            CONTENT_TYPE_JSONLINES | CONTENT_TYPE_JSONL => Some(QueryResponseFormat::JsonLINES),
+            _ => None,
+        }
+    })
+}
+
+/// Picks the first supported codec from the `codecs` media type parameter, in client order.
+/// Unknown codecs are skipped: uncompressed IPC is always readable by Arrow clients.
+fn negotiate_arrow_codec<'a>(mut params: impl Iterator<Item = &'a str>) -> Option<ArrowCodec> {
+    let codecs = params.find_map(|param| {
+        let (name, value) = param.split_once('=')?;
+        (name.trim() == "codecs").then_some(value)
+    })?;
+    codecs
+        .trim()
+        .trim_matches('"')
+        .split(',')
+        .find_map(|codec| ArrowCodec::from_name(codec.trim()))
+}
+
+/// Splits on `delimiter` except inside double quotes, so `codecs="zstd, lz4"` stays whole.
+fn split_unquoted(value: &str, delimiter: char) -> impl Iterator<Item = &str> {
+    let mut in_quotes = false;
+    value.split(move |c: char| {
+        if c == '"' {
+            in_quotes = !in_quotes;
+        }
+        c == delimiter && !in_quotes
+    })
 }
 
 #[test]
@@ -251,7 +270,7 @@ fn content_negotiation_test() {
     );
     assert!(matches!(
         get_first_compatible_format(&headers),
-        Some(QueryResponseFormat::Arrow)
+        Some(QueryResponseFormat::Arrow(None))
     ));
 
     headers.remove(ACCEPT);
@@ -270,7 +289,7 @@ fn content_negotiation_test() {
     );
     assert!(matches!(
         get_first_compatible_format(&headers),
-        Some(QueryResponseFormat::Arrow)
+        Some(QueryResponseFormat::Arrow(None))
     ));
 
     headers.remove(ACCEPT);
@@ -300,4 +319,65 @@ fn content_negotiation_test() {
 
     headers.remove(ACCEPT);
     assert!(matches!(get_first_compatible_format(&headers), None));
+}
+
+#[test]
+fn arrow_codec_negotiation_test() {
+    let cases: [(&str, Option<ArrowCodec>); 9] = [
+        ("application/vnd.apache.arrow.stream", None),
+        (
+            r#"application/vnd.apache.arrow.stream; codecs="zstd, lz4""#,
+            Some(ArrowCodec::Zstd),
+        ),
+        (
+            r#"application/vnd.apache.arrow.stream; codecs="lz4, zstd""#,
+            Some(ArrowCodec::Lz4),
+        ),
+        (
+            "application/vnd.apache.arrow.stream; codecs=lz4",
+            Some(ArrowCodec::Lz4),
+        ),
+        (
+            r#"application/vnd.apache.arrow.stream; codecs="brotli, zstd""#,
+            Some(ArrowCodec::Zstd),
+        ),
+        (
+            r#"application/vnd.apache.arrow.stream; codecs="brotli""#,
+            None,
+        ),
+        (
+            r#"Application/Vnd.Apache.Arrow.Stream; Codecs="ZSTD""#,
+            Some(ArrowCodec::Zstd),
+        ),
+        (
+            "application/vnd.apache.arrow.stream; q=0.9; codecs=lz4",
+            Some(ArrowCodec::Lz4),
+        ),
+        (
+            r#"text/html, application/vnd.apache.arrow.stream; codecs="zstd, lz4", application/json"#,
+            Some(ArrowCodec::Zstd),
+        ),
+    ];
+    for (accept, codec) in cases {
+        let mut headers = HeaderMap::new();
+        headers.insert(ACCEPT, accept.parse().unwrap());
+        assert_eq!(
+            get_first_compatible_format(&headers),
+            Some(QueryResponseFormat::Arrow(codec)),
+            "Accept: {accept}"
+        );
+    }
+}
+
+#[test]
+fn media_type_parameters_are_ignored_test() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        ACCEPT,
+        "text/html, application/json; q=0.9".parse().unwrap(),
+    );
+    assert_eq!(
+        get_first_compatible_format(&headers),
+        Some(QueryResponseFormat::Json)
+    );
 }

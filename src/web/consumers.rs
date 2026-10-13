@@ -48,15 +48,15 @@ impl<W: RecordBatchWriter + Send> RecordBatchConsumer for WriterConsumer<W> {
 pub(crate) struct ArrowConsumer<W: Write + Send> {
     inner: WriterConsumer<StreamWriter<W>>,
     sink: Option<W>,
-    compress: bool,
+    compression: Option<CompressionType>,
 }
 
 impl<W: Write + Send> ArrowConsumer<W> {
-    pub fn new(sink: W, compress: bool) -> Self {
+    pub fn new(sink: W, compression: Option<CompressionType>) -> Self {
         Self {
             inner: WriterConsumer { writer: None },
             sink: Some(sink),
-            compress,
+            compression,
         }
     }
 }
@@ -64,15 +64,9 @@ impl<W: Write + Send> ArrowConsumer<W> {
 impl<W: Write + Send> RecordBatchConsumer for ArrowConsumer<W> {
     fn on_schema(&mut self, schema: SchemaRef) -> Result<(), String> {
         let sink = self.sink.take().unwrap();
-        // Arrow IPC responses use zstd (level 3, the codec's default) as their own
-        // compression instead of relying on the outer HTTP gzip layer.
-        let write_options = if self.compress {
-            IpcWriteOptions::default()
-                .try_with_compression(Some(CompressionType::ZSTD))
-                .map_err(|e| e.to_string())?
-        } else {
-            IpcWriteOptions::default()
-        };
+        let write_options = IpcWriteOptions::default()
+            .try_with_compression(self.compression)
+            .map_err(|e| e.to_string())?;
         self.inner.writer = Some(
             StreamWriter::try_new_with_options(sink, &schema, write_options)
                 .map_err(|e| e.to_string())?,

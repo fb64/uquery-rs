@@ -95,7 +95,44 @@ df = pl.read_ipc_stream("result.arrow")
 print(df)
 ```
 
-By default, Arrow IPC responses are compressed with zstd at the Arrow level rather than relying on the outer HTTP gzip layer. See [`UQ_ARROW_COMPRESSION`](./configuration.md#arrow-compression) to disable this.
+### Compression
+
+Arrow IPC responses can be compressed at the Arrow level with ZSTD or LZ4. To ask for it, add a `codecs` parameter to the Arrow media type, listing the codecs your client can decode in order of preference:
+
+```bash
+curl -X POST http://localhost:8080 \
+  -H "Content-Type: text/plain" \
+  -H 'Accept: application/vnd.apache.arrow.stream; codecs="zstd, lz4"' \
+  -d "SELECT * FROM 'https://example.com/data.parquet' LIMIT 1000" \
+  --output result.arrow
+```
+
+µQuery uses the first codec in the list that it supports and names it in the response header, for example `Content-Type: application/vnd.apache.arrow.stream; codecs=zstd`. These responses skip HTTP gzip, since the data is already compressed.
+
+| Codec | `codecs` value | Best for |
+|---|---|---|
+| ZSTD | `zstd` | Smallest responses |
+| LZ4 | `lz4` | Fastest compression and decoding |
+
+Without `codecs`, or when none of the listed codecs is supported, the response is uncompressed Arrow IPC, which every Arrow reader can decode. HTTP gzip still applies when the client sends `Accept-Encoding: gzip`.
+
+pyarrow and Polars decode both codecs automatically, so the reading code above works unchanged. For example, with `requests`:
+
+```python
+import pyarrow as pa
+import requests
+
+response = requests.post(
+    "http://localhost:8080",
+    data="SELECT * FROM 'https://example.com/data.parquet'",
+    headers={"Accept": 'application/vnd.apache.arrow.stream; codecs="zstd"'},
+)
+table = pa.ipc.open_stream(response.content).read_all()
+```
+
+:::warning
+JavaScript clients such as Apache Arrow JS don't decode compressed IPC buffers out of the box. Leave out `codecs` and rely on HTTP gzip instead.
+:::
 
 ## Streaming behaviour
 
