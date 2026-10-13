@@ -106,11 +106,8 @@ async fn query(
             "format [{}] is not supported",
             headers
                 .get(ACCEPT)
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_lowercase()
-                .as_str()
+                .map(|accept| String::from_utf8_lossy(accept.as_bytes()).to_lowercase())
+                .unwrap_or_default()
         ),
     })?;
 
@@ -202,7 +199,11 @@ async fn query(
 }
 
 fn get_first_compatible_format(headers: &HeaderMap) -> Option<QueryResponseFormat> {
-    let accept_value = headers.get(ACCEPT)?.to_str().unwrap().to_lowercase();
+    // No Accept header means any media type is acceptable (RFC 9110), so default to JSON.
+    let Some(accept) = headers.get(ACCEPT) else {
+        return Some(QueryResponseFormat::Json);
+    };
+    let accept_value = accept.to_str().ok()?.to_lowercase();
     split_unquoted(&accept_value, ',').find_map(|media_range| {
         let mut parts = split_unquoted(media_range, ';');
         match parts.next()?.trim() {
@@ -318,7 +319,10 @@ fn content_negotiation_test() {
     ));
 
     headers.remove(ACCEPT);
-    assert!(matches!(get_first_compatible_format(&headers), None));
+    assert!(matches!(
+        get_first_compatible_format(&headers),
+        Some(QueryResponseFormat::Json)
+    ));
 }
 
 #[test]

@@ -119,7 +119,7 @@ mod tests {
         ACCEPT, ACCEPT_ENCODING, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
         CONTENT_ENCODING, CONTENT_TYPE, ORIGIN,
     };
-    use axum::http::{Request, StatusCode};
+    use axum::http::{HeaderValue, Request, StatusCode};
     use axum::response::Response;
     use duckdb::Connection;
     use futures_util::TryStreamExt;
@@ -177,6 +177,42 @@ mod tests {
             from_utf8(&*result).unwrap(),
             "[{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}]"
         );
+    }
+
+    #[tokio::test]
+    async fn query_without_accept_defaults_to_json_test() {
+        let request = Request::builder()
+            .method(http::Method::POST)
+            .uri("/")
+            .header(CONTENT_TYPE, "text/plain")
+            .body(Body::from(TEST_QUERY))
+            .unwrap();
+        let response = create_router(make_engine(false), false, None)
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let result = read_response(response).await;
+        assert_eq!(
+            from_utf8(&result).unwrap(),
+            "[{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}]"
+        );
+    }
+
+    #[tokio::test]
+    async fn query_with_non_ascii_accept_is_not_acceptable_test() {
+        let request = Request::builder()
+            .method(http::Method::POST)
+            .uri("/")
+            .header(CONTENT_TYPE, "text/plain")
+            .header(ACCEPT, HeaderValue::from_bytes(b"text/caf\xe9").unwrap())
+            .body(Body::from(TEST_QUERY))
+            .unwrap();
+        let response = create_router(make_engine(false), false, None)
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
     }
 
     #[tokio::test]
