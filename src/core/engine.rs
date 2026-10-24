@@ -1,5 +1,6 @@
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
+use std::sync::Arc;
 
 pub trait RecordBatchConsumer: Send {
     fn on_schema(&mut self, schema: SchemaRef) -> Result<(), String>;
@@ -7,9 +8,18 @@ pub trait RecordBatchConsumer: Send {
     fn finish(&mut self) -> Result<(), String>;
 }
 
+/// Stops a query from another thread.
+pub trait QueryCanceller: Send + Sync {
+    fn cancel(&self);
+}
+
 /// A validated, ready-to-stream query returned by [`UQueryEngine::prepare`].
 pub trait ExecutableQuery: Send {
     fn execute(&mut self, consumer: &mut dyn RecordBatchConsumer) -> Result<(), String>;
+
+    /// Return a handle that cancels this query. Once the query is dropped,
+    /// cancelling is a no-op.
+    fn canceller(&self) -> Arc<dyn QueryCanceller>;
 }
 
 pub trait UQueryEngine: Send + Sync {

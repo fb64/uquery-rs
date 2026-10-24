@@ -108,7 +108,7 @@ async fn shutdown_signal() {
 mod tests {
     use crate::cli::options::UQ_ATTACHED_DB_NAME;
     use crate::core::duckdb::DuckDbEngine;
-    use crate::core::engine::{ExecutableQuery, RecordBatchConsumer, UQueryEngine};
+    use crate::core::engine::{ExecutableQuery, QueryCanceller, RecordBatchConsumer, UQueryEngine};
     use crate::web::request::QueryRequest;
     use crate::web::response::QueryResponseFormat;
     use crate::web::routers::create_router;
@@ -148,6 +148,16 @@ mod tests {
         fn execute(&mut self, consumer: &mut dyn RecordBatchConsumer) -> Result<(), String> {
             consumer.finish()
         }
+
+        fn canceller(&self) -> Arc<dyn QueryCanceller> {
+            Arc::new(NoopCanceller)
+        }
+    }
+
+    struct NoopCanceller;
+
+    impl QueryCanceller for NoopCanceller {
+        fn cancel(&self) {}
     }
 
     const TEST_QUERY: &str = "SELECT * FROM (VALUES (1,'Rust','Safe, concurrent, performant systems language')) Language(Id,Name,Description)";
@@ -563,6 +573,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+    }
+
+    #[tokio::test]
+    async fn query_timeout_cancels_query_test() {
+        // A single pooled connection: the next query only runs if the timed-out
+        // one was cancelled and released its connection.
+        let engine: Arc<dyn UQueryEngine> =
+            Arc::new(DuckDbEngine::new(Connection::open_in_memory().unwrap(), false, 1).unwrap());
+        let router = create_router(engine, false, Some(Duration::from_millis(500)));
+        let request = |sql: &str| {
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/")
+                .header(CONTENT_TYPE, "text/plain")
+                .body(Body::from(sql.to_string()))
+                .unwrap()
+        };
+
+        let response = router
+            .clone()
+            .oneshot(request("SELECT count(*) FROM range(1000000000000)"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+
+        let response = router
+            .oneshot(request("SELECT 42 AS answer"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let result = read_response(response).await;
+        assert_eq!(from_utf8(&result).unwrap(), "[{\"answer\":42}]");
     }
 
     fn make_engine(attached: bool) -> Arc<dyn UQueryEngine> {
