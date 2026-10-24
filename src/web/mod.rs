@@ -6,6 +6,7 @@ pub const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
 pub const CONTENT_TYPE_ARROW_WITH_CODECS: &str = "application/vnd.apache.arrow.stream; codecs=";
 pub const CONTENT_TYPE_ANY: &str = "*/*";
 
+pub mod auth;
 pub mod consumers;
 pub mod proxy;
 pub mod request;

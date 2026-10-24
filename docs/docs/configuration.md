@@ -1,7 +1,7 @@
 ---
 sidebar_position: 4
 title: Configuration
-description: "All uQuery CLI flags and UQ_* environment variables: port, connection pool, query timeout, S3 and GCS credentials, Iceberg and DuckDB UI."
+description: "All uQuery CLI flags and UQ_* environment variables: port, connection pool, query timeout, API key, S3 and GCS credentials, Iceberg and DuckDB UI."
 ---
 
 # Configuration
@@ -17,6 +17,7 @@ description: "All uQuery CLI flags and UQ_* environment variables: port, connect
 | `--cors-enabled` | `UQ_CORS_ENABLED` | `false` | Enable permissive CORS (all origins) |
 | `--pool-size` | `UQ_POOL_SIZE` | `4` | Number of concurrent DuckDB connections |
 | `--query-timeout` | `UQ_QUERY_TIMEOUT` | `30` | Seconds until a query times out (0 = disabled) |
+| `--api-key` | `UQ_API_KEY` | — (open) | Require an API key on queries; empty value generates one |
 
 ### Pool size
 
@@ -37,6 +38,24 @@ Set to `0` to disable:
 ```bash
 docker run -p 8080:8080 -e UQ_QUERY_TIMEOUT=0 fb64/uquery
 ```
+
+### API key
+
+By default the query API is open. With `--api-key` (or `UQ_API_KEY`), every query must carry the key in one of these headers, otherwise uQuery answers HTTP 401:
+
+```bash
+curl -H 'Authorization: Bearer <key>' --data 'SELECT 42' http://localhost:8080
+curl -H 'X-API-Key: <key>' --data 'SELECT 42' http://localhost:8080
+```
+
+Pass the flag without a value, or set `UQ_API_KEY` to an empty string, to let uQuery generate a random key and print it in the console at startup:
+
+```bash
+docker run -p 8080:8080 -e UQ_API_KEY= fb64/uquery
+# INFO uquery: API key required, generated key: 3f9c…
+```
+
+A generated key changes on every restart; pass your own key to keep it stable. The `/health` endpoint stays open for probes. The [DuckDB UI](#duckdb-ui) proxy cannot check the key, so `--api-key` and `--duckdb-ui` cannot be combined.
 
 ---
 
