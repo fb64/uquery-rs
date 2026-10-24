@@ -1,6 +1,6 @@
 [package]
 name = "uquery"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 
 [dependencies]
@@ -8,8 +8,8 @@ axum = { version = "0.8" }
 tokio = {version="1.47",features = ["full"] }
 tokio-util = { version = "*",features = ["io","io-util"] }
 serde = { version = "1.0", features = ["derive"] }
-duckdb = { version = "=1.10506.0", features = ["extensions-full"] }
-arrow = { version = "58", features = ["arrow-json","arrow-csv","ipc_compression","chrono-tz"] }
+duckdb = { version = "=1.20000.1", features = ["extensions-full"] }
+arrow = { version = "60", features = ["arrow-json","arrow-csv","ipc_compression","chrono-tz"] }
 serde_json = "1.0"
 futures-util = "0.3"
 tracing = "0.1"
@@ -21,8 +21,8 @@ async-trait = "0.1.88"
 pingora = {version = "0.8.0", features=["proxy"]}
 
 [dev-dependencies]
-polars = { version = "0.53"}
-polars-io = { version = "0.53",features = ["ipc_streaming","json"]}
+polars = { version = "0.55"}
+polars-io = { version = "0.55",features = ["ipc_streaming","json"]}
 
 [profile.release]
 strip = true
