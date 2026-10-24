@@ -105,6 +105,12 @@ pub struct Options {
     #[arg(default_value = "30", long, env = "UQ_QUERY_TIMEOUT")]
     pub query_timeout_secs: u64,
 
+    /// Require this API key on queries, sent as `Authorization: Bearer <key>` or
+    /// `X-API-Key: <key>`. Without a value, a key is generated and printed at
+    /// startup. When the option is absent, the API is open.
+    #[arg(long, env = "UQ_API_KEY", num_args = 0..=1, default_missing_value = "")]
+    pub api_key: Option<String>,
+
     /// Install all DuckDB extensions and exit. Use this once after installation
     /// to pre-download extensions so the server starts without network access.
     #[arg(long, env = "UQ_INSTALL_EXTENSIONS")]
@@ -112,6 +118,17 @@ pub struct Options {
 }
 
 impl Options {
+    /// Rejects option combinations that would bypass the API key.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.api_key.is_some() && self.duckdb_ui {
+            return Err(
+                "--api-key cannot be used with --duckdb-ui: the DuckDB UI proxy does not check the API key"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
     /// Returns SQL statements to INSTALL the DuckDB extensions required by the
     /// current configuration. Safe to run on every start — DuckDB is a no-op
     /// for extensions that are already installed.
@@ -260,7 +277,40 @@ mod tests {
             pool_size: 4,
             query_timeout_secs: 30,
             install_extensions: false,
+            api_key: None,
         }
+    }
+
+    #[test]
+    fn validate_api_key_with_duckdb_ui() {
+        assert!(test_opts().validate().is_ok());
+        let api_key_only = Options {
+            api_key: Some(String::new()),
+            ..test_opts()
+        };
+        assert!(api_key_only.validate().is_ok());
+        let ui_only = Options {
+            duckdb_ui: true,
+            ..test_opts()
+        };
+        assert!(ui_only.validate().is_ok());
+        let both = Options {
+            api_key: Some("key".to_string()),
+            duckdb_ui: true,
+            ..test_opts()
+        };
+        assert!(both.validate().is_err());
+    }
+
+    #[test]
+    fn parse_api_key() {
+        let parse = |args: &[&str]| Options::try_parse_from(args).unwrap().api_key;
+        assert_eq!(parse(&["uquery"]), None);
+        assert_eq!(parse(&["uquery", "--api-key"]), Some(String::new()));
+        assert_eq!(
+            parse(&["uquery", "--api-key", "secret"]),
+            Some("secret".to_string())
+        );
     }
 
     #[test]

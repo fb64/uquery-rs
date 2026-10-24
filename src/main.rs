@@ -8,7 +8,7 @@ use crate::web::proxy::UIProxyService;
 use std::sync::Arc;
 use tokio::signal;
 use tokio::time::Instant;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 mod cli;
 pub mod core;
@@ -16,6 +16,10 @@ mod web;
 
 fn main() {
     let cli_options = cli::options::parse();
+    if let Err(e) = cli_options.validate() {
+        error!("{e}");
+        std::process::exit(1);
+    }
     let start = Instant::now();
     let addr = format!("{}:{}", cli_options.addr, cli_options.port);
     let conn = Connection::open_in_memory().unwrap();
@@ -59,7 +63,18 @@ fn main() {
             0 => None,
             secs => Some(std::time::Duration::from_secs(secs)),
         };
-        let router = web::routers::create_router(engine, cli_options.cors_enabled, query_timeout);
+        let api_key = cli_options.api_key.map(|key| {
+            if key.is_empty() {
+                let key = web::auth::generate_api_key();
+                info!("API key required, generated key: {key}");
+                key
+            } else {
+                info!("API key required");
+                key
+            }
+        });
+        let router =
+            web::routers::create_router(engine, cli_options.cors_enabled, query_timeout, api_key);
         axum::serve(listener, router)
             .with_graceful_shutdown(shutdown_signal())
             .await
@@ -197,7 +212,7 @@ mod tests {
             .header(CONTENT_TYPE, "text/plain")
             .body(Body::from(TEST_QUERY))
             .unwrap();
-        let response = create_router(make_engine(false), false, None)
+        let response = create_router(make_engine(false), false, None, None)
             .oneshot(request)
             .await
             .unwrap();
@@ -218,7 +233,7 @@ mod tests {
             .header(ACCEPT, HeaderValue::from_bytes(b"text/caf\xe9").unwrap())
             .body(Body::from(TEST_QUERY))
             .unwrap();
-        let response = create_router(make_engine(false), false, None)
+        let response = create_router(make_engine(false), false, None, None)
             .oneshot(request)
             .await
             .unwrap();
@@ -352,7 +367,7 @@ mod tests {
         )
         .unwrap();
         let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
-        let response = create_router(engine, false, None)
+        let response = create_router(engine, false, None, None)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
             .unwrap();
@@ -375,7 +390,7 @@ mod tests {
 
         let conn = Connection::open_in_memory().unwrap();
         let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, false, 2).unwrap());
-        let response = create_router(engine, true, None)
+        let response = create_router(engine, true, None, None)
             .oneshot(builder.body(Body::empty()).unwrap())
             .await
             .unwrap();
@@ -539,7 +554,7 @@ mod tests {
         )
         .unwrap();
         let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
-        let response = create_router(engine, false, None)
+        let response = create_router(engine, false, None, None)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
             .unwrap();
@@ -568,7 +583,7 @@ mod tests {
                 serde_json::to_string(&QueryRequest::new("SELECT 1".to_string())).unwrap(),
             ))
             .unwrap();
-        let response = create_router(engine, false, Some(Duration::from_millis(50)))
+        let response = create_router(engine, false, Some(Duration::from_millis(50)), None)
             .oneshot(request)
             .await
             .unwrap();
@@ -581,7 +596,7 @@ mod tests {
         // one was cancelled and released its connection.
         let engine: Arc<dyn UQueryEngine> =
             Arc::new(DuckDbEngine::new(Connection::open_in_memory().unwrap(), false, 1).unwrap());
-        let router = create_router(engine, false, Some(Duration::from_millis(500)));
+        let router = create_router(engine, false, Some(Duration::from_millis(500)), None);
         let request = |sql: &str| {
             Request::builder()
                 .method(http::Method::POST)
@@ -607,6 +622,51 @@ mod tests {
         assert_eq!(from_utf8(&result).unwrap(), "[{\"answer\":42}]");
     }
 
+    #[tokio::test]
+    async fn query_api_key_test() {
+        let router = create_router(make_engine(false), false, None, Some("secret".to_string()));
+        let request = |header: Option<(&str, &str)>| {
+            let mut builder = Request::builder()
+                .method(http::Method::POST)
+                .uri("/")
+                .header(CONTENT_TYPE, "text/plain");
+            if let Some((name, value)) = header {
+                builder = builder.header(name, value);
+            }
+            builder.body(Body::from(TEST_QUERY)).unwrap()
+        };
+
+        for header in [
+            None,
+            Some(("authorization", "Bearer wrong")),
+            Some(("x-api-key", "wrong")),
+            Some(("authorization", "Basic secret")),
+        ] {
+            let response = router.clone().oneshot(request(header)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{header:?}");
+            assert_eq!(
+                response.headers().get("www-authenticate").unwrap(),
+                "Bearer"
+            );
+            assert_eq!(
+                response.headers().get(CONTENT_TYPE).unwrap(),
+                "application/problem+json"
+            );
+        }
+
+        for header in [("authorization", "Bearer secret"), ("x-api-key", "secret")] {
+            let response = router.clone().oneshot(request(Some(header))).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{header:?}");
+        }
+
+        let health = Request::builder()
+            .uri("/health")
+            .body(Body::empty())
+            .unwrap();
+        let response = router.oneshot(health).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
     fn make_engine(attached: bool) -> Arc<dyn UQueryEngine> {
         Arc::new(DuckDbEngine::new(Connection::open_in_memory().unwrap(), attached, 2).unwrap())
     }
@@ -630,7 +690,7 @@ mod tests {
         if compress {
             builder = builder.header(ACCEPT_ENCODING, "gzip");
         }
-        create_router(make_engine(false), false, None)
+        create_router(make_engine(false), false, None, None)
             .oneshot(builder.body(Body::from(json)).unwrap())
             .await
             .unwrap()
@@ -645,7 +705,7 @@ mod tests {
         if let Some(encoding) = accept_encoding {
             builder = builder.header(ACCEPT_ENCODING, encoding);
         }
-        create_router(make_engine(false), false, None)
+        create_router(make_engine(false), false, None, None)
             .oneshot(builder.body(Body::from(TEST_QUERY)).unwrap())
             .await
             .unwrap()
@@ -673,7 +733,7 @@ mod tests {
             .uri("/")
             .header(CONTENT_TYPE, "text/plain")
             .header(ACCEPT, format.to_string());
-        create_router(make_engine(false), false, None)
+        create_router(make_engine(false), false, None, None)
             .oneshot(builder.body(Body::from(sql)).unwrap())
             .await
             .unwrap()

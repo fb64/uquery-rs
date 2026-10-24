@@ -1,5 +1,6 @@
 use crate::core::engine::{QueryCanceller, RecordBatchConsumer, UQueryEngine};
 use crate::core::error::UQueryError;
+use crate::web::auth::require_api_key;
 use crate::web::consumers::{ArrowConsumer, WriterConsumer};
 use crate::web::request::QueryRequest;
 use crate::web::response::{ArrowCodec, QueryResponseFormat};
@@ -13,13 +14,13 @@ use arrow::ipc::CompressionType;
 use arrow::json::{ArrayWriter, LineDelimitedWriter};
 use arrow::record_batch::RecordBatch;
 
-use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::header::{ACCEPT, CONTENT_TYPE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
+use axum::{Router, middleware};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -88,6 +89,7 @@ pub fn create_router(
     engine: Arc<dyn UQueryEngine>,
     cors_enabled: bool,
     query_timeout: Option<Duration>,
+    api_key: Option<String>,
 ) -> Router {
     let state = Arc::new(UQueryState {
         engine,
@@ -95,9 +97,16 @@ pub fn create_router(
     });
     // Arrow responses with negotiated IPC buffer compression are already compressed,
     // so the outer gzip layer skips them.
+    let mut query_route = post(query);
+    if let Some(api_key) = api_key {
+        query_route = query_route.route_layer(middleware::from_fn_with_state(
+            Arc::<str>::from(api_key),
+            require_api_key,
+        ));
+    }
     let router = Router::new()
         .route("/health", get(|| async { StatusCode::OK }))
-        .route("/", post(query))
+        .route("/", query_route)
         .with_state(state)
         .layer(
             ServiceBuilder::new().layer(
