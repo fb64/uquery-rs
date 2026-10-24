@@ -1,4 +1,4 @@
-use crate::core::engine::{RecordBatchConsumer, UQueryEngine};
+use crate::core::engine::{QueryCanceller, RecordBatchConsumer, UQueryEngine};
 use crate::core::error::UQueryError;
 use crate::web::consumers::{ArrowConsumer, WriterConsumer};
 use crate::web::request::QueryRequest;
@@ -56,6 +56,26 @@ impl<C: RecordBatchConsumer> RecordBatchConsumer for FirstBatchNotifier<C> {
             let _ = tx.send(Ok(()));
         }
         self.inner.finish()
+    }
+}
+
+/// Cancels the query when the handler ends before the first batch: on timeout,
+/// or when the client disconnects and axum drops the handler future.
+struct CancelOnDrop(Option<oneshot::Receiver<Arc<dyn QueryCanceller>>>);
+
+impl CancelOnDrop {
+    fn disarm(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if let Some(mut canceller_rx) = self.0.take()
+            && let Ok(canceller) = canceller_rx.try_recv()
+        {
+            canceller.cancel();
+        }
     }
 }
 
@@ -118,10 +138,17 @@ async fn query(
     let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
     let uq_engine = Arc::clone(&state.engine);
     let query_timeout = state.query_timeout;
+    let (canceller_tx, canceller_rx) = oneshot::channel::<Arc<dyn QueryCanceller>>();
+    let cancel_guard = CancelOnDrop(Some(canceller_rx));
 
     spawn_blocking(move || {
         // acquire a connection and defer SQL parsing to execute() — single prepare.
         let mut prepared = uq_engine.prepare(&sql).expect("pool acquire failed");
+        // The handler already gave up (timeout or client disconnect) while this
+        // task waited for a connection: release it without running the query.
+        if canceller_tx.send(prepared.canceller()).is_err() {
+            return;
+        }
 
         // Execute. FirstBatchNotifier fires ready_tx on the first batch (or
         // finish for empty results). If execute() fails before any batch is
@@ -158,7 +185,8 @@ async fn query(
         }
     });
 
-    // Timeout covers the time from request start until the first batch is ready.
+    // Timeout covers the time from request start until the first batch is ready;
+    // a query still running at that point is cancelled by `cancel_guard`.
     // Once streaming begins, results are delivered to completion.
     let ready_result = match query_timeout {
         Some(timeout) => {
@@ -172,6 +200,7 @@ async fn query(
         }
         None => ready_rx.await,
     };
+    cancel_guard.disarm();
 
     match ready_result {
         Ok(Ok(())) => {}

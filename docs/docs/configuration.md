@@ -30,7 +30,7 @@ docker run -p 8080:8080 -e UQ_POOL_SIZE=8 fb64/uquery
 
 ### Query timeout
 
-`UQ_QUERY_TIMEOUT` sets the maximum time (in seconds) between receiving a request and the first result batch. Queries that take longer return HTTP 408.
+`UQ_QUERY_TIMEOUT` sets the maximum time (in seconds) between receiving a request and the first result batch. Queries that take longer return HTTP 408 and are cancelled, freeing their pooled connection. A query is also cancelled when the client disconnects before the first result batch.
 
 Set to `0` to disable:
 
