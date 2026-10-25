@@ -55,6 +55,7 @@ const config: Config = {
       logo: {
         alt: 'µQuery Logo',
         src: 'img/uquery.svg',
+        srcDark: 'img/uquery-dark.svg',
       },
       items: [
         {

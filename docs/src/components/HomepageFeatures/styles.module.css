@@ -5,12 +5,15 @@
   width: 100%;
 }
 
-.featureSvg {
-  height: 200px;
-  width: 200px;
+.featureLogo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 140px;
+  margin-bottom: 1rem;
 }
 
-.featurePng {
-  height: 200px;
-  width: 200px;
+.featureImg {
+  max-height: 120px;
+  max-width: 80%;
 }
