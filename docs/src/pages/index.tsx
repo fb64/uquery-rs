@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
 import HomepageFeatures from '@site/src/components/HomepageFeatures';
 import Heading from '@theme/Heading';
@@ -9,6 +10,8 @@ import {JSX, useState} from 'react';
 import styles from './index.module.css';
 
 const INSTALL_CMD = 'curl -fsSL https://install.uquery.dev | sh';
+// Hosted on Vercel Blob to keep the video out of the git history.
+const INTRO_VIDEO_URL = 'https://6s7zwsj7te57nmvt.public.blob.vercel-storage.com/uquery-intro.mp4';
 
 function InstallCommand() {
   const [copied, setCopied] = useState(false);
@@ -41,7 +44,7 @@ function HomepageHeader() {
     <header className={clsx('hero hero--primary', styles.heroBanner)}>
       <div className="container">
         <Heading as="h1" className="hero__title">
-          {siteConfig.title}
+          <span className={styles.mu}>µ</span>Query
         </Heading>
         <p className="hero__subtitle">{siteConfig.tagline}</p>
         <InstallCommand />
@@ -57,6 +60,24 @@ function HomepageHeader() {
   );
 }
 
+function IntroVideo() {
+  return (
+    <section className={styles.videoSection}>
+      <div className="container">
+        <Heading as="h2" className={styles.videoTitle}>µQuery in 90 seconds</Heading>
+        <video
+          className={styles.video}
+          controls
+          playsInline
+          preload="metadata"
+          poster={useBaseUrl('/video/uquery-intro-poster.jpg')}>
+          <source src={INTRO_VIDEO_URL} type="video/mp4" />
+        </video>
+      </div>
+    </section>
+  );
+}
+
 export default function Home(): JSX.Element {
   const {siteConfig} = useDocusaurusContext();
   return (
@@ -65,6 +86,7 @@ export default function Home(): JSX.Element {
       description="uQuery is a lightweight HTTP API to query CSV, JSON, Parquet and Excel files with SQL. Powered by DuckDB, built in Rust.">
       <HomepageHeader />
       <main>
+        <IntroVideo />
         <HomepageFeatures />
       </main>
     </Layout>

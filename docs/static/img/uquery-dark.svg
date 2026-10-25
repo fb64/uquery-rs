@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 512" width="560" height="512">
+  <title>µQuery</title>
+  <defs>
+    <mask id="uq-knockout" maskUnits="userSpaceOnUse" x="0" y="0" width="560" height="512">
+      <rect width="560" height="512" fill="#fff"/>
+      <path d="M372 24 L244 276 L312 276 L206 492 L380 224 L312 224 Z" fill="#000" stroke="#000" stroke-width="30" stroke-linejoin="round"/>
+    </mask>
+  </defs>
+  <g mask="url(#uq-knockout)" fill="none" stroke-width="52" stroke-linecap="round">
+    <path d="M70 200 V460 M70 261 A63 63 0 0 0 196 261 V200" stroke="#ee476e"/>
+    <circle cx="400" cy="220" r="100" stroke="#04d4a3"/>
+    <path d="M471 291 L530 350" stroke="#04d4a3"/>
+  </g>
+  <path d="M372 24 L244 276 L312 276 L206 492 L380 224 L312 224 Z" fill="#fce16b" stroke="#fce16b" stroke-width="12" stroke-linejoin="round"/>
+</svg>
