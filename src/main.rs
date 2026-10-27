@@ -20,6 +20,13 @@ fn main() {
         error!("{e}");
         std::process::exit(1);
     }
+    if cli_options.self_update || cli_options.check_update {
+        if let Err(e) = cli::update::run(cli_options.check_update, cli_options.yes) {
+            error!("Update failed: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let start = Instant::now();
     let addr = format!("{}:{}", cli_options.addr, cli_options.port);
     let conn = Connection::open_in_memory().unwrap();

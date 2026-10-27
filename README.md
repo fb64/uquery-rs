@@ -66,6 +66,8 @@ uquery --install-extensions
 uquery
 ```
 
+Update to the latest release later with `uquery --self-update` (or `uquery --check-update` to only show the release notes).
+
 ### Cargo
 
 [Rust toolchain](https://www.rust-lang.org/tools/install) must be installed

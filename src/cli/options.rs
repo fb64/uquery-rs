@@ -115,6 +115,18 @@ pub struct Options {
     /// to pre-download extensions so the server starts without network access.
     #[arg(long, env = "UQ_INSTALL_EXTENSIONS")]
     pub install_extensions: bool,
+
+    /// Update uQuery to the latest GitHub release and exit.
+    #[arg(long, conflicts_with = "check_update")]
+    pub self_update: bool,
+
+    /// Check for a newer GitHub release, print its release notes and exit.
+    #[arg(long)]
+    pub check_update: bool,
+
+    /// Do not ask for confirmation before installing an update.
+    #[arg(short = 'y', long, requires = "self_update")]
+    pub yes: bool,
 }
 
 impl Options {
@@ -278,6 +290,9 @@ mod tests {
             query_timeout_secs: 30,
             install_extensions: false,
             api_key: None,
+            self_update: false,
+            check_update: false,
+            yes: false,
         }
     }
 
@@ -311,6 +326,19 @@ mod tests {
             parse(&["uquery", "--api-key", "secret"]),
             Some("secret".to_string())
         );
+    }
+
+    #[test]
+    fn parse_update_flags() {
+        let opts = Options::try_parse_from(["uquery", "--self-update", "-y"]).unwrap();
+        assert!(opts.self_update && opts.yes && !opts.check_update);
+        assert!(
+            Options::try_parse_from(["uquery", "--check-update"])
+                .unwrap()
+                .check_update
+        );
+        assert!(Options::try_parse_from(["uquery", "--yes"]).is_err());
+        assert!(Options::try_parse_from(["uquery", "--self-update", "--check-update"]).is_err());
     }
 
     #[test]

@@ -97,6 +97,18 @@ cargo install --git https://github.com/fb64/uquery-rs
 uquery
 ```
 
+### Update
+
+A binary installed from GitHub Releases can update itself to the latest release:
+```shell
+# Show the latest version and its release notes, without installing it
+uquery --check-update
+# Download and install the latest release (add -y to skip the confirmation)
+uquery --self-update
+```
+Extensions are tied to the bundled DuckDB version: if you pre-installed them, run `uquery --install-extensions` again after an update.
+With Docker, pull the latest image instead.
+
 
 ## Simple Query example
 
