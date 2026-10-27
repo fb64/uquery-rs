@@ -26,4 +26,42 @@ pub trait UQueryEngine: Send + Sync {
     /// Validate `sql` and return an executable handle or an error if the query
     /// is invalid.
     fn prepare(&self, sql: &str) -> Result<Box<dyn ExecutableQuery>, String>;
+
+    /// Run `sql` and collect the whole result in memory. Use [`prepare`](Self::prepare)
+    /// with a [`RecordBatchConsumer`] to stream large results instead.
+    fn query(&self, sql: &str) -> Result<QueryResult, String> {
+        let mut result = QueryResult::default();
+        self.prepare(sql)?.execute(&mut result)?;
+        Ok(result)
+    }
+}
+
+/// Result of [`UQueryEngine::query`]. `schema` is set even when no batch was
+/// produced.
+#[derive(Debug, Default)]
+pub struct QueryResult {
+    pub schema: Option<SchemaRef>,
+    pub batches: Vec<RecordBatch>,
+}
+
+impl QueryResult {
+    pub fn num_rows(&self) -> usize {
+        self.batches.iter().map(RecordBatch::num_rows).sum()
+    }
+}
+
+impl RecordBatchConsumer for QueryResult {
+    fn on_schema(&mut self, schema: SchemaRef) -> Result<(), String> {
+        self.schema = Some(schema);
+        Ok(())
+    }
+
+    fn on_batch(&mut self, batch: RecordBatch) -> Result<(), String> {
+        self.batches.push(batch);
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<(), String> {
+        Ok(())
+    }
 }

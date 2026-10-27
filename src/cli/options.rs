@@ -3,9 +3,7 @@ use std::env;
 use tracing::metadata::LevelFilter;
 use tracing::warn;
 use tracing_subscriber::EnvFilter;
-
-/// Attached database name
-pub const UQ_ATTACHED_DB_NAME: &str = "uquery_attached_db";
+use uquery::core::duckdb::UQ_ATTACHED_DB_NAME;
 
 /// Enable the provider credential chain for AWS
 const UQ_CREATE_AWS_CREDENTIAL_CHAIN: &str =

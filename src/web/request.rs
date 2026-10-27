@@ -26,10 +26,7 @@ where
 {
     type Rejection = UQueryError;
 
-    async fn from_request(
-        req: Request<Body>,
-        _state: &S,
-    ) -> pingora::Result<Self, Self::Rejection> {
+    async fn from_request(req: Request<Body>, _state: &S) -> Result<Self, Self::Rejection> {
         let (parts, body) = req.into_parts();
 
         let content_type = parts
