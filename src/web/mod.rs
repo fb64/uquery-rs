@@ -8,7 +8,9 @@ pub const CONTENT_TYPE_ANY: &str = "*/*";
 
 pub mod auth;
 pub mod consumers;
-pub mod proxy;
 pub mod request;
 pub mod response;
 pub mod routers;
+
+#[cfg(test)]
+mod tests;

@@ -1,10 +1,13 @@
-use crate::cli::options::UQ_ATTACHED_DB_NAME;
 use crate::core::engine::{ExecutableQuery, QueryCanceller, RecordBatchConsumer, UQueryEngine};
 use duckdb::{Connection, InterruptHandle};
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 use tokio::time::Instant;
 use tracing::debug;
+
+/// Name of the database attached by the caller and made the default schema
+/// of every pooled connection when `DuckDbEngine::new` is called with `attached`.
+pub const UQ_ATTACHED_DB_NAME: &str = "uquery_attached_db";
 
 struct ConnectionPool {
     connections: Mutex<VecDeque<Connection>>,
@@ -190,6 +193,18 @@ mod tests {
             query.execute(&mut CountingConsumer(0)),
             Err("query cancelled".to_string())
         );
+    }
+
+    #[test]
+    fn query_collects_result_test() {
+        let result = make_engine()
+            .query("SELECT * FROM range(3) t(n) WHERE n > 5")
+            .unwrap();
+        assert_eq!(result.num_rows(), 0);
+        assert_eq!(result.schema.unwrap().field(0).name(), "n");
+
+        let result = make_engine().query("SELECT * FROM range(5000)").unwrap();
+        assert_eq!(result.num_rows(), 5000);
     }
 
     #[test]

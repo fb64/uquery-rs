@@ -141,3 +141,10 @@ Options:
 podman run fb64/uquery:latest
 #docker run fb64/uquery:latest
 ```
+### Rust library
+µQuery can also be embedded in a Rust application, to run queries or serve its HTTP API:
+```toml
+[dependencies]
+uquery = { git = "https://github.com/fb64/uquery-rs", default-features = false }
+```
+See the [Rust library documentation](https://uquery.dev/docs/library).
