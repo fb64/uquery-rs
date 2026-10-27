@@ -14,6 +14,11 @@ on:
     tags:
       - "v*.*.*"
 
+# Cache rustc and C/C++ (bundled DuckDB) compilations in the GitHub Actions cache.
+env:
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: sccache
+
 jobs:
   # ── Linux binaries ──────────────────────────────────────────────────────────
   # Each target runs on a native runner — no cross-compilation, no Docker toolchain.
@@ -43,6 +48,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.11
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -87,6 +94,8 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: mozilla-actions/sccache-action@v0.0.11
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
@@ -126,6 +135,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.11
 
       - uses: Swatinem/rust-cache@v2
         with:
