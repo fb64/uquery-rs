@@ -333,7 +333,7 @@ fn content_negotiation_test() {
 
     headers.remove(ACCEPT);
     headers.insert(ACCEPT, "text/html,application/xml".parse().unwrap());
-    assert!(matches!(get_first_compatible_format(&headers), None));
+    assert!(get_first_compatible_format(&headers).is_none());
 
     headers.remove(ACCEPT);
     headers.insert(ACCEPT, "application/jsonlines".parse().unwrap());
