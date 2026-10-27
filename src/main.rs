@@ -194,7 +194,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
         assert_eq!(
-            from_utf8(&*result).unwrap(),
+            from_utf8(&result).unwrap(),
             "[{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}]"
         );
     }
@@ -206,7 +206,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
         assert_eq!(
-            from_utf8(&*result).unwrap(),
+            from_utf8(&result).unwrap(),
             "[{\"Id\":1,\"Name\":\"Rust\",\"Description\":\"Safe, concurrent, performant systems language\"}]"
         );
     }
@@ -257,7 +257,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
         assert_eq!(
-            from_utf8(&*result).unwrap(),
+            from_utf8(&result).unwrap(),
             "Id,Name,Description\n1,Rust,\"Safe, concurrent, performant systems language\"\n"
         );
     }
@@ -380,7 +380,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
-        let response_string = from_utf8(&*result).unwrap();
+        let response_string = from_utf8(&result).unwrap();
         let json_array: Vec<Value> = serde_json::from_str(response_string).unwrap();
         assert_eq!(json_array.len(), 10);
         assert_eq!(json_array[0].get("id").unwrap().as_i64().unwrap(), 1);
@@ -424,7 +424,7 @@ mod tests {
         .await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let result = read_response(response).await;
-        let error: Value = serde_json::from_str(from_utf8(&*result).unwrap()).unwrap();
+        let error: Value = serde_json::from_str(from_utf8(&result).unwrap()).unwrap();
         assert_eq!(error["status"].as_u64().unwrap(), 400);
         assert_eq!(error["title"], "SQL Error");
         assert!(!error["detail"].to_string().is_empty());
@@ -439,7 +439,7 @@ mod tests {
         .await;
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
-        let response_string = from_utf8(&*result).unwrap();
+        let response_string = from_utf8(&result).unwrap();
         let json_array: Vec<Value> = serde_json::from_str(response_string).unwrap();
         assert_eq!(json_array.len(), 2);
         assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(), "abc");
@@ -461,7 +461,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let result = read_response(response).await;
-        let response_string = from_utf8(&*result).unwrap();
+        let response_string = from_utf8(&result).unwrap();
         let json_array: Vec<Value> = serde_json::from_str(response_string).unwrap();
 
         assert_eq!(json_array.len(), 2);
@@ -484,7 +484,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let result = read_response(response).await;
-        let response_string = from_utf8(&*result).unwrap();
+        let response_string = from_utf8(&result).unwrap();
         let json_array: Vec<Value> = serde_json::from_str(response_string).unwrap();
 
         assert_eq!(json_array.len(), 2);
@@ -507,7 +507,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let result = read_response(response).await;
-        let response_string = from_utf8(&*result).unwrap();
+        let response_string = from_utf8(&result).unwrap();
         let json_array: Vec<Value> = serde_json::from_str(response_string).unwrap();
 
         assert_eq!(json_array.len(), 2);
@@ -530,8 +530,8 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let result = read_response(response).await;
-        let response_string = from_utf8(&*result).unwrap().lines().collect::<Vec<&str>>();
-        let json_first: Value = serde_json::from_str(response_string.get(0).unwrap()).unwrap();
+        let response_string = from_utf8(&result).unwrap().lines().collect::<Vec<&str>>();
+        let json_first: Value = serde_json::from_str(response_string.first().unwrap()).unwrap();
 
         assert_eq!(response_string.len(), 2);
         assert_eq!(json_first.get("f_str").unwrap().as_str().unwrap(), "abc");
@@ -567,7 +567,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let result = read_response(response).await;
-        let response_string = from_utf8(&*result).unwrap();
+        let response_string = from_utf8(&result).unwrap();
         let json_array: Vec<Value> = serde_json::from_str(response_string).unwrap();
         assert_eq!(json_array.len(), 2);
         assert_eq!(json_array[0].get("f_str").unwrap().as_str().unwrap(), "abc");
