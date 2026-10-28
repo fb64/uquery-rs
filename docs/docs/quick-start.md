@@ -204,7 +204,7 @@ Options:
       --query-timeout-secs <QUERY_TIMEOUT_SECS>
           Maximum query execution time in seconds (0 = no timeout) [env: UQ_QUERY_TIMEOUT=] [default: 30]
       --max-query-duration-secs <MAX_QUERY_DURATION_SECS>
-          Maximum total query time in seconds, including streaming the result. A response still streaming at that point is aborted (0 = no limit) [env: UQ_MAX_QUERY_DURATION=] [default: 0]
+          Maximum total query time in seconds, including streaming the result. A response still streaming at that point is aborted (0 = no limit) [env: UQ_MAX_QUERY_DURATION=] [default: 600]
       --memory-limit <MEMORY_LIMIT>
           DuckDB memory limit, e.g. 4GB (default: 80% of the system memory) [env: UQ_MEMORY_LIMIT=]
       --threads <THREADS>
