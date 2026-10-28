@@ -95,6 +95,11 @@ pub struct Options {
     #[arg(long, env = "UQ_ALLOWED_DIRECTORIES")]
     pub allowed_directories: Option<Vec<String>>,
 
+    /// Allow statements other than SELECT (COPY, CREATE, ATTACH, USE, ...). All
+    /// clients share the same database: only enable this for trusted clients.
+    #[arg(long, env = "UQ_ALLOW_WRITES")]
+    pub allow_writes: bool,
+
     /// Number of pre-cloned DuckDB connections kept in the pool
     #[arg(default_value = "4", long, env = "UQ_POOL_SIZE")]
     pub pool_size: usize,
@@ -284,6 +289,7 @@ mod tests {
             ic_user: None,
             ic_secret: None,
             allowed_directories: None,
+            allow_writes: false,
             pool_size: 4,
             query_timeout_secs: 30,
             install_extensions: false,

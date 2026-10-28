@@ -35,6 +35,8 @@ pub enum EngineError {
     Arrow(ArrowError),
     /// The query was cancelled before it started.
     Cancelled,
+    /// The query is not allowed, e.g. a write statement on a read-only engine.
+    Forbidden(String),
     /// Error raised by a custom [`RecordBatchConsumer`].
     ///
     /// [`RecordBatchConsumer`]: crate::core::engine::RecordBatchConsumer
@@ -47,6 +49,7 @@ impl fmt::Display for EngineError {
             EngineError::DuckDb(e) => e.fmt(f),
             EngineError::Arrow(e) => e.fmt(f),
             EngineError::Cancelled => f.write_str("query cancelled"),
+            EngineError::Forbidden(reason) => f.write_str(reason),
             EngineError::Consumer(e) => e.fmt(f),
         }
     }
@@ -57,7 +60,7 @@ impl std::error::Error for EngineError {
         match self {
             EngineError::DuckDb(e) => Some(e),
             EngineError::Arrow(e) => Some(e),
-            EngineError::Cancelled => None,
+            EngineError::Cancelled | EngineError::Forbidden(_) => None,
             EngineError::Consumer(e) => Some(e.as_ref()),
         }
     }

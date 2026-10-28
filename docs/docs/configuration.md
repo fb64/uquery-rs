@@ -14,10 +14,11 @@ description: "All uQuery CLI flags and UQ_* environment variables: port, connect
 |---|---|---|---|
 | `--port` | `UQ_PORT` | `8080` | Port to listen on |
 | `--addr` | `UQ_ADDR` | `0.0.0.0` | Address to listen on |
-| `--cors-enabled` | `UQ_CORS_ENABLED` | `false` | Enable permissive CORS (all origins) |
+| `--cors-enabled` | `UQ_CORS_ENABLED` | `false` | Enable permissive CORS (all origins), required for [browser clients](#browser-clients) |
 | `--pool-size` | `UQ_POOL_SIZE` | `4` | Number of concurrent DuckDB connections |
 | `--query-timeout` | `UQ_QUERY_TIMEOUT` | `30` | Seconds until a query times out (0 = disabled) |
 | `--api-key` | `UQ_API_KEY` | — (open) | Require an API key on queries; empty value generates one |
+| `--allow-writes` | `UQ_ALLOW_WRITES` | `false` | Allow statements other than `SELECT` (see [Read-only queries](#read-only-queries)) |
 
 ### Pool size
 
@@ -55,7 +56,19 @@ docker run -p 8080:8080 -e UQ_API_KEY= fb64/uquery
 # INFO uquery: API key required, generated key: 3f9c…
 ```
 
-A generated key changes on every restart; pass your own key to keep it stable. The `/health` endpoint stays open for probes. The [DuckDB UI](#duckdb-ui) proxy cannot check the key, so `--api-key` and `--duckdb-ui` cannot be combined.
+Use an API key whenever µQuery is reachable by anyone other than you. A generated key changes on every restart; pass your own key to keep it stable. The `/health` endpoint stays open for probes. The [DuckDB UI](#duckdb-ui) proxy cannot check the key, so `--api-key` and `--duckdb-ui` cannot be combined.
+
+### Read-only queries
+
+By default µQuery only runs single `SELECT` queries (including `FROM …`, `WITH …`, `VALUES`, `DESCRIBE` and `SUMMARIZE`). Other statements (`COPY`, `CREATE`, `INSERT`, `ATTACH`, `DETACH`, `USE`, `SET`, `PRAGMA`, `CALL`, `EXPORT`, …) and requests with several statements are rejected with HTTP 403.
+
+All clients share the same DuckDB database, so these statements would let any client write files in the [allowed directories](#allowed-directories), or create tables and views that change what other clients see. Enable them with `--allow-writes` only when all clients are trusted.
+
+### Browser clients
+
+When CORS is disabled, µQuery rejects requests sent by web browsers (recognized by their `Origin` header) with HTTP 403. Without this check, any web page could make its visitors' browsers send queries to a µQuery server they can reach, even without reading the results. Tools such as `curl`, `httpie` and HTTP client libraries don't send `Origin` and are not affected.
+
+To call µQuery from a web application, enable CORS with `--cors-enabled`, and use an [API key](#api-key).
 
 ---
 
@@ -155,6 +168,8 @@ All four values must be set together to enable Iceberg. Once attached, query Ice
 ```bash
 docker run -p 8080:8080 -p 14213:14213 -e UQ_UI_PROXY=true fb64/uquery
 ```
+
+The UI proxy listens on the same address as the API (`--addr`). The UI has full access to the DuckDB database and no authentication, so it cannot be combined with `--api-key`.
 
 ---
 

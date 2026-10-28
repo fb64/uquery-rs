@@ -1,6 +1,6 @@
 use crate::core::engine::{QueryCanceller, RecordBatchConsumer, UQueryEngine};
 use crate::core::error::{EngineError, UQueryError};
-use crate::web::auth::require_api_key;
+use crate::web::auth::{reject_browser_requests, require_api_key};
 use crate::web::consumers::{ArrowConsumer, WriterConsumer};
 use crate::web::request::QueryRequest;
 use crate::web::response::{ArrowCodec, QueryResponseFormat};
@@ -98,6 +98,9 @@ pub fn create_router(
     // Arrow responses with negotiated IPC buffer compression are already compressed,
     // so the outer gzip layer skips them.
     let mut query_route = post(query);
+    if !cors_enabled {
+        query_route = query_route.route_layer(middleware::from_fn(reject_browser_requests));
+    }
     if let Some(api_key) = api_key {
         query_route = query_route.route_layer(middleware::from_fn_with_state(
             Arc::<str>::from(api_key),
@@ -213,6 +216,13 @@ async fn query(
 
     match ready_result {
         Ok(Ok(())) => {}
+        Ok(Err(err @ EngineError::Forbidden(_))) => {
+            return Err(UQueryError {
+                status_code: StatusCode::FORBIDDEN.as_u16(),
+                title: "Forbidden Query".to_string(),
+                detail: err.to_string(),
+            });
+        }
         Ok(Err(err)) => {
             return Err(UQueryError {
                 status_code: StatusCode::BAD_REQUEST.as_u16(),
