@@ -33,6 +33,12 @@ jobs:
         with:
           key: clippy
 
+      # rust-cache deletes the files but keeps the directories of DuckDB's unpacked
+      # sources; libduckdb-sys then fails to unpack over the empty tree.
+      - name: Remove DuckDB sources emptied by rust-cache
+        shell: bash
+        run: rm -rf target/duckdb-sources target/*/duckdb-sources
+
       - name: Run fmt
         run: cargo fmt --all -- --check
 
@@ -53,6 +59,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: test
+
+      # rust-cache deletes the files but keeps the directories of DuckDB's unpacked
+      # sources; libduckdb-sys then fails to unpack over the empty tree.
+      - name: Remove DuckDB sources emptied by rust-cache
+        shell: bash
+        run: rm -rf target/duckdb-sources target/*/duckdb-sources
 
       - name: Run tests
         run: cargo test --verbose
