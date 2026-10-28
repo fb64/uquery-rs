@@ -39,6 +39,10 @@ jobs:
       - name: Run clippy
         run: cargo clippy -- -D warnings
 
+      # Checks the library as its users build it, without the `cli` feature.
+      - name: Run clippy on the library alone
+        run: cargo clippy --lib --no-default-features -- -D warnings
+
   test:
     runs-on: ubuntu-latest
     steps:
