@@ -120,7 +120,9 @@ Options:
       --ic-secret <IC_SECRET>
           [env: UQ_ICEBERG_SECRET=]
       --allowed-directories <ALLOWED_DIRECTORIES>
-          [env: UQ_ALLOWED_DIRECTORIES=]
+          Comma-separated local directories queries can read (default: the current directory) [env: UQ_ALLOWED_DIRECTORIES=]
+      --allowed-urls <ALLOWED_URLS>
+          Comma-separated URL prefixes queries can read, e.g. https://data.example.com/ or s3://my-bucket/, or `none` to disable remote access (default: https://, s3://, gs://, gcs://, gcss://) [env: UQ_ALLOWED_URLS=]
       --allow-writes
           Allow statements other than SELECT (COPY, CREATE, ATTACH, USE, ...). All clients share the same database: only enable this for trusted clients [env: UQ_ALLOW_WRITES=]
       --pool-size <POOL_SIZE>

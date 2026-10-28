@@ -18,8 +18,11 @@ CREATE SECRET gcp_secret (TYPE gcp, PROVIDER credential_chain);"#;
 /// Start DuckDB UI
 const UQ_START_UI_SERVER: &str = "CALL start_ui_server();";
 
-/// Cloud allowed directory prefixes
+/// Remote URL prefixes allowed by default
 const CLOUD_PREFIXES: &[&str] = &["https://", "gcs://", "gs://", "gcss://", "s3://"];
+
+/// `--allowed-urls` value disabling remote access
+const NO_URLS: &str = "none";
 
 /// All known DuckDB extensions with their optional source repository.
 const ALL_EXTENSIONS: &[(&str, Option<&str>)] = &[
@@ -96,6 +99,12 @@ pub struct Options {
     #[arg(long, env = "UQ_ALLOWED_DIRECTORIES", value_delimiter = ',')]
     pub allowed_directories: Option<Vec<String>>,
 
+    /// Comma-separated URL prefixes queries can read, e.g. https://data.example.com/ or
+    /// s3://my-bucket/, or `none` to disable remote access (default: https://, s3://,
+    /// gs://, gcs://, gcss://)
+    #[arg(long, env = "UQ_ALLOWED_URLS", value_delimiter = ',')]
+    pub allowed_urls: Option<Vec<String>>,
+
     /// Allow statements other than SELECT (COPY, CREATE, ATTACH, USE, ...). All
     /// clients share the same database: only enable this for trusted clients.
     #[arg(long, env = "UQ_ALLOW_WRITES")]
@@ -154,6 +163,15 @@ impl Options {
                 "--api-key cannot be used with --duckdb-ui: the DuckDB UI proxy does not check the API key"
                     .to_string(),
             );
+        }
+        if let Some(urls) = &self.allowed_urls
+            && let Some(url) = urls
+                .iter()
+                .find(|url| *url != NO_URLS && !url.contains("://"))
+        {
+            return Err(format!(
+                "--allowed-urls: '{url}' is not a URL prefix such as https:// or s3://my-bucket/ (use --allowed-directories for local paths)"
+            ));
         }
         Ok(())
     }
@@ -247,11 +265,12 @@ impl Options {
             init_script.push(UQ_START_UI_SERVER.to_string());
         }
 
-        let directories = self.get_allowed_directories();
-        if !directories.is_empty() {
-            init_script.push(format!("SET allowed_directories = [{}];", directories));
-            init_script.push("SET enable_external_access=false;".to_string());
-        }
+        // Always set, even when empty: an empty list blocks all file and URL access.
+        init_script.push(format!(
+            "SET allowed_directories = [{}];",
+            self.get_allowed_directories()
+        ));
+        init_script.push("SET enable_external_access=false;".to_string());
 
         if let Some(memory_limit) = &self.memory_limit {
             init_script.push(format!("SET memory_limit = {};", sql_string(memory_limit)));
@@ -274,13 +293,30 @@ impl Options {
                 })
         });
 
-        CLOUD_PREFIXES
+        self.allowed_url_prefixes()
             .iter()
-            .copied()
+            .map(String::as_str)
             .chain(local_dirs.iter().map(String::as_str))
+            .filter(|path| !path.is_empty())
             .map(sql_string)
             .collect::<Vec<_>>()
             .join(",")
+    }
+
+    /// URL prefixes from `--allowed-urls`, or the cloud prefixes by default. A prefix
+    /// naming a host or bucket gets a trailing `/`, so that `s3://bucket` does not also
+    /// allow `s3://bucket-other`.
+    fn allowed_url_prefixes(&self) -> Vec<String> {
+        let Some(urls) = &self.allowed_urls else {
+            return CLOUD_PREFIXES.iter().map(|s| s.to_string()).collect();
+        };
+        urls.iter()
+            .filter(|url| !url.is_empty() && *url != NO_URLS)
+            .map(|url| match url.split_once("://") {
+                Some((_, rest)) if !rest.is_empty() && !url.ends_with('/') => format!("{url}/"),
+                _ => url.clone(),
+            })
+            .collect()
     }
 }
 
@@ -327,6 +363,7 @@ mod tests {
             ic_user: None,
             ic_secret: None,
             allowed_directories: None,
+            allowed_urls: None,
             allow_writes: false,
             pool_size: 4,
             query_timeout_secs: 30,
@@ -539,6 +576,116 @@ mod tests {
             options.init_script()[2],
             "SET enable_external_access=false;"
         );
+    }
+
+    #[test]
+    fn init_default_allowed_urls() {
+        let options = Options {
+            allowed_directories: Some(vec!["/data".to_string()]),
+            ..test_opts()
+        };
+        assert_eq!(
+            options.init_script()[1],
+            "SET allowed_directories = ['https://','gcs://','gs://','gcss://','s3://','/data'];"
+        );
+    }
+
+    #[test]
+    fn init_allowed_urls() {
+        let options = Options {
+            allowed_directories: Some(vec!["/data".to_string()]),
+            allowed_urls: Some(vec![
+                "https://data.example.com".to_string(),
+                "s3://bucket/reports/".to_string(),
+                "https://".to_string(),
+            ]),
+            ..test_opts()
+        };
+        assert_eq!(
+            options.init_script()[1],
+            "SET allowed_directories = ['https://data.example.com/','s3://bucket/reports/','https://','/data'];"
+        );
+    }
+
+    #[test]
+    fn init_no_access() {
+        let options = Options {
+            allowed_directories: Some(vec![String::new()]),
+            allowed_urls: Some(vec![NO_URLS.to_string()]),
+            ..test_opts()
+        };
+        assert_eq!(options.init_script()[1], "SET allowed_directories = [];");
+        assert_eq!(
+            options.init_script()[2],
+            "SET enable_external_access=false;"
+        );
+    }
+
+    #[test]
+    fn validate_allowed_urls() {
+        let with_urls = |urls: &[&str]| Options {
+            allowed_urls: Some(urls.iter().map(|s| s.to_string()).collect()),
+            ..test_opts()
+        };
+        assert!(with_urls(&["https://", "s3://bucket"]).validate().is_ok());
+        assert!(with_urls(&["none"]).validate().is_ok());
+        assert!(with_urls(&["/data"]).validate().is_err());
+    }
+
+    /// Runs the startup SQL on DuckDB (minus `LOAD httpfs`, which needs network
+    /// access) and checks the resulting sandbox.
+    fn sandboxed_connection(options: &Options) -> uquery::duckdb::Connection {
+        let conn = uquery::duckdb::Connection::open_in_memory().unwrap();
+        for sql in options
+            .init_script()
+            .iter()
+            .filter(|sql| *sql != "LOAD httpfs;")
+        {
+            conn.execute_batch(sql)
+                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+        conn
+    }
+
+    fn can_read(conn: &uquery::duckdb::Connection, path: &str) -> bool {
+        conn.execute_batch(&format!("SELECT * FROM read_text({})", sql_string(path)))
+            .is_ok()
+    }
+
+    #[test]
+    fn init_script_sandbox_on_duckdb() {
+        let tests_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests");
+        let options = Options {
+            allowed_directories: Some(vec![tests_dir.to_string()]),
+            allowed_urls: Some(vec![NO_URLS.to_string()]),
+            db_file: Some(format!("{tests_dir}/test.db")),
+            memory_limit: Some("1GB".to_string()),
+            threads: Some(2),
+            ..test_opts()
+        };
+        let conn = sandboxed_connection(&options);
+        assert!(can_read(&conn, &format!("{tests_dir}/test.csv")));
+        assert!(!can_read(
+            &conn,
+            concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")
+        ));
+        assert!(!can_read(&conn, "/etc/passwd"));
+        assert!(
+            conn.execute_batch("SET threads = 4").is_err(),
+            "configuration must be locked"
+        );
+    }
+
+    #[test]
+    fn init_script_without_any_access_on_duckdb() {
+        let options = Options {
+            allowed_directories: Some(vec![String::new()]),
+            allowed_urls: Some(vec![NO_URLS.to_string()]),
+            ..test_opts()
+        };
+        let conn = sandboxed_connection(&options);
+        let csv = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/test.csv");
+        assert!(!can_read(&conn, csv));
     }
 
     #[test]

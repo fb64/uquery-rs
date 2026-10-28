@@ -94,7 +94,8 @@ To call µQuery from a web application, enable CORS with `--cors-enabled`, and u
 | Flag | Env var | Default | Description |
 |---|---|---|---|
 | `--db-file` | `UQ_DB_FILE` | — | DuckDB file to attach (read-only) |
-| `--allowed-directories` | `UQ_ALLOWED_DIRECTORIES` | current dir + cloud prefixes | Restrict file access to specific paths |
+| `--allowed-directories` | `UQ_ALLOWED_DIRECTORIES` | current dir | Comma-separated local directories queries can read |
+| `--allowed-urls` | `UQ_ALLOWED_URLS` | `https://`, `s3://`, `gs://`, `gcs://`, `gcss://` | Comma-separated URL prefixes queries can read, or `none` |
 
 ### Attached database
 
@@ -108,13 +109,22 @@ See the [Custom Database](./advanced-tutorials/custom-database.md) tutorial for 
 
 ### Allowed directories
 
-By default µQuery allows access to the current working directory and cloud storage prefixes (`s3://`, `gcs://`, etc.). Use `--allowed-directories` to restrict or expand this:
+Queries can only read files in the allowed directories and URLs; everything else is rejected. By default the allowed directory is the current working directory. Use `--allowed-directories` to choose others:
 
 ```bash
 uquery --allowed-directories /data/readonly,/tmp/uploads
 ```
 
-Setting this disables all external access not explicitly listed.
+### Allowed URLs
+
+By default queries can read any `https://` URL and any cloud storage bucket (`s3://`, `gs://`, `gcs://`, `gcss://`). Requests are sent from the µQuery server, so a client can reach internal HTTPS services on the server's network, and, with a [credential chain](#cloud-storage), every bucket the server's credentials can read. Use `--allowed-urls` to restrict remote access to the prefixes you need, or `none` to disable it:
+
+```bash
+uquery --allowed-urls https://data.example.com/,s3://my-bucket/reports/
+uquery --allowed-urls none
+```
+
+A prefix naming a host or bucket is completed with a trailing `/`, so `s3://my-bucket` does not also allow `s3://my-bucket-other`. Plain `http://` URLs are not allowed by default.
 
 ---
 
