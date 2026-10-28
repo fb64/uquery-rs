@@ -38,9 +38,11 @@ for batch in result.batches {
 }
 ```
 
+The engine only runs single `SELECT` queries and rejects other statements with `EngineError::Forbidden`, as the server does (see [Read-only queries](./configuration.md#read-only-queries)). Call `.allow_writes(true)` on the engine to allow them.
+
 `query` collects the whole result in memory. To stream large results, call `prepare` and pass a `RecordBatchConsumer` to `execute`. The query handle also gives a `canceller` to stop it from another thread.
 
-Errors are returned as `uquery::core::error::EngineError`, which implements `std::error::Error`: `DuckDb` and `Arrow` wrap the underlying error, `Cancelled` is a query cancelled before it started, and `Consumer` carries any error returned by your own `RecordBatchConsumer`.
+Errors are returned as `uquery::core::error::EngineError`, which implements `std::error::Error`: `DuckDb` and `Arrow` wrap the underlying error, `Cancelled` is a query cancelled before it started, `Forbidden` is a statement the engine doesn't allow, and `Consumer` carries any error returned by your own `RecordBatchConsumer`.
 
 The `duckdb` and `arrow` crates are re-exported as `uquery::duckdb` and `uquery::arrow`, so their versions always match the engine's.
 
@@ -57,7 +59,7 @@ let engine = DuckDbEngine::new(conn, true, 4)?;
 
 ## Serve the HTTP API
 
-`create_router` returns the axum `Router` of the µQuery API, with the same response formats, compression, timeout and API key handling as the server. Serve it alone or nest it in your application.
+`create_router` returns the axum `Router` of the µQuery API, with the same response formats, compression, timeout, API key and [browser request](./configuration.md#browser-clients) handling as the server. Serve it alone or nest it in your application.
 
 ```rust
 use std::sync::Arc;

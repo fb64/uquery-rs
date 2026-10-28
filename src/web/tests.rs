@@ -630,3 +630,44 @@ async fn read_response(response: Response) -> Vec<u8> {
             Vec::new()
         })
 }
+
+fn browser_query(sql: &str) -> Request<Body> {
+    Request::builder()
+        .method(http::Method::POST)
+        .uri("/")
+        .header(CONTENT_TYPE, "text/plain")
+        .header(ORIGIN, "https://evil.example")
+        .body(Body::from(sql.to_string()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn browser_request_rejected_without_cors_test() {
+    let response = create_router(make_engine(false), false, None, None)
+        .oneshot(browser_query("SELECT 1"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn browser_request_allowed_with_cors_test() {
+    let response = create_router(make_engine(false), true, None, None)
+        .oneshot(browser_query("SELECT 1"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn write_statement_forbidden_test() {
+    let response = perform_json_request(
+        QueryRequest::new("CREATE TABLE t AS SELECT 1".to_string()),
+        QueryResponseFormat::Json,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let error: Value = serde_json::from_slice(&read_response(response).await).unwrap();
+    assert_eq!(error["title"], "Forbidden Query");
+    assert_eq!(error["detail"], "only SELECT queries are allowed");
+}

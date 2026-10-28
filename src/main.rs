@@ -4,7 +4,7 @@ use pingora::prelude::{Server, http_proxy_service};
 use std::sync::Arc;
 use tokio::signal;
 use tokio::time::Instant;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uquery::core::duckdb::DuckDbEngine;
 use uquery::core::engine::UQueryEngine;
 use uquery::duckdb::Connection;
@@ -43,8 +43,15 @@ fn main() {
     for init_query in cli_options.init_script() {
         conn.execute(init_query.as_str(), []).unwrap();
     }
+    if cli_options.allow_writes {
+        warn!(
+            "Write statements are allowed: every client can modify the shared database and write files in the allowed directories"
+        );
+    }
     let engine: Arc<dyn UQueryEngine> = Arc::new(
-        DuckDbEngine::new(conn, cli_options.db_file.is_some(), cli_options.pool_size).unwrap(),
+        DuckDbEngine::new(conn, cli_options.db_file.is_some(), cli_options.pool_size)
+            .unwrap()
+            .allow_writes(cli_options.allow_writes),
     );
 
     let tk_runtime = tokio::runtime::Builder::new_multi_thread()
@@ -55,8 +62,9 @@ fn main() {
         .unwrap();
 
     if cli_options.duckdb_ui {
+        let ui_addr = format!("{}:{}", cli_options.addr, cli_options.duckdb_ui_port);
         tk_runtime.spawn_blocking(move || {
-            start_duckdb_ui_proxy(cli_options.duckdb_ui_port);
+            start_duckdb_ui_proxy(&ui_addr);
         });
     }
 
@@ -87,14 +95,14 @@ fn main() {
     });
 }
 
-fn start_duckdb_ui_proxy(ui_port: u16) {
+fn start_duckdb_ui_proxy(ui_addr: &str) {
     let mut server = Server::new(None).unwrap();
     server.bootstrap();
     let service: UIProxyService = UIProxyService;
     let mut app = http_proxy_service(&server.configuration, service);
-    app.add_tcp(format!("0.0.0.0:{ui_port}").as_str());
+    app.add_tcp(ui_addr);
     server.add_service(app);
-    info!("DuckDB UI Proxy server started on port: {ui_port}");
+    info!("DuckDB UI Proxy server started on {ui_addr}");
     server.run_forever()
 }
 

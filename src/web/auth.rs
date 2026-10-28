@@ -1,6 +1,6 @@
 use crate::core::error::UQueryError;
 use axum::extract::{Request, State};
-use axum::http::header::{AUTHORIZATION, WWW_AUTHENTICATE};
+use axum::http::header::{AUTHORIZATION, ORIGIN, WWW_AUTHENTICATE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -36,6 +36,26 @@ pub async fn require_api_key(
         .headers_mut()
         .insert(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
     response
+}
+
+/// Reject requests sent by a web browser, recognized by their `Origin` header.
+///
+/// Browsers send cross-origin `text/plain` and form POSTs without a CORS preflight,
+/// so without this check any web page could run queries on a server its visitor
+/// can reach. Browsers send `Origin` on every POST, which also covers DNS
+/// rebinding. Used when CORS is disabled.
+pub async fn reject_browser_requests(request: Request, next: Next) -> Response {
+    if !request.headers().contains_key(ORIGIN) {
+        return next.run(request).await;
+    }
+    UQueryError {
+        status_code: StatusCode::FORBIDDEN.as_u16(),
+        title: "Forbidden".to_string(),
+        detail:
+            "requests from web browsers (with an Origin header) are rejected unless CORS is enabled"
+                .to_string(),
+    }
+    .into_response()
 }
 
 fn request_keys(headers: &HeaderMap) -> impl Iterator<Item = &str> {
