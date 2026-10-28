@@ -1,5 +1,6 @@
 use clap::Parser;
 use std::env;
+use std::path::Path;
 use tracing::metadata::LevelFilter;
 use tracing::warn;
 use tracing_subscriber::EnvFilter;
@@ -23,6 +24,16 @@ const CLOUD_PREFIXES: &[&str] = &["https://", "gcs://", "gs://", "gcss://", "s3:
 
 /// `--allowed-urls` value disabling remote access
 const NO_URLS: &str = "none";
+
+/// CA certificate bundles DuckDB looks for to verify HTTPS servers. The sandbox
+/// blocks reading them unless they are listed in `allowed_paths`.
+const CA_BUNDLES: &[&str] = &[
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/ca-bundle.pem",
+    "/etc/ssl/cert.pem",
+];
 
 /// All known DuckDB extensions with their optional source repository.
 const ALL_EXTENSIONS: &[(&str, Option<&str>)] = &[
@@ -222,6 +233,9 @@ impl Options {
         let ic_secret = self.ic_secret.as_ref();
         let mut init_script = Vec::new();
 
+        // Secrets saved in ~/.duckdb are outside the sandbox: loading them on the first
+        // remote read fails. This must run before anything uses the secret manager.
+        init_script.push("SET allow_persistent_secrets = false;".to_string());
         init_script.push("LOAD httpfs;".to_string());
 
         if let (Some(key), Some(secret)) = (key_opt, secret_opt) {
@@ -270,6 +284,11 @@ impl Options {
             "SET allowed_directories = [{}];",
             self.get_allowed_directories()
         ));
+        // Must be set before external access is disabled.
+        init_script.push(format!(
+            "SET allowed_paths = [{}];",
+            self.get_allowed_paths()
+        ));
         init_script.push("SET enable_external_access=false;".to_string());
 
         if let Some(memory_limit) = &self.memory_limit {
@@ -299,6 +318,19 @@ impl Options {
             .chain(local_dirs.iter().map(String::as_str))
             .filter(|path| !path.is_empty())
             .map(sql_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// The CA bundles present on this system, needed for HTTPS when remote access is allowed.
+    fn get_allowed_paths(&self) -> String {
+        if self.allowed_url_prefixes().is_empty() {
+            return String::new();
+        }
+        CA_BUNDLES
+            .iter()
+            .filter(|path| Path::new(path).is_file())
+            .map(|path| sql_string(path))
             .collect::<Vec<_>>()
             .join(",")
     }
@@ -446,7 +478,11 @@ mod tests {
     #[test]
     fn init_query_empty() {
         let options: Options = test_opts();
-        assert_eq!(options.init_script()[0], "LOAD httpfs;");
+        assert_eq!(
+            options.init_script()[0],
+            "SET allow_persistent_secrets = false;"
+        );
+        assert_eq!(options.init_script()[1], "LOAD httpfs;");
         assert_eq!(
             options.init_script().last().unwrap(),
             "SET lock_configuration = true;"
@@ -461,7 +497,7 @@ mod tests {
             ..test_opts()
         };
         assert_eq!(
-            options.init_script()[1],
+            options.init_script()[2],
             "CREATE SECRET gcs_secret (TYPE GCS, KEY_ID 'key_id', SECRET 'secret');"
         );
     }
@@ -477,14 +513,14 @@ mod tests {
         };
         let script = options.init_script();
         assert_eq!(
-            script[1],
+            script[2],
             "CREATE SECRET gcs_secret (TYPE GCS, KEY_ID 'key', SECRET 'it''s');"
         );
         assert_eq!(
-            script[2],
+            script[3],
             format!("ATTACH '/data/o''brien.db' as {UQ_ATTACHED_DB_NAME} (READ_ONLY);")
         );
-        assert!(script[3].ends_with(",'/data/o''brien'];"), "{}", script[3]);
+        assert!(script[4].ends_with(",'/data/o''brien'];"), "{}", script[4]);
     }
 
     #[test]
@@ -508,7 +544,7 @@ mod tests {
             aws_credential_chain: true,
             ..test_opts()
         };
-        assert_eq!(options.init_script()[1], UQ_CREATE_AWS_CREDENTIAL_CHAIN);
+        assert_eq!(options.init_script()[2], UQ_CREATE_AWS_CREDENTIAL_CHAIN);
     }
 
     #[test]
@@ -519,7 +555,7 @@ mod tests {
             ..test_opts()
         };
         assert_eq!(
-            options.init_script()[1],
+            options.init_script()[2],
             "CREATE SECRET gcs_secret (TYPE GCS, KEY_ID 'key_id2', SECRET 'secret2');"
         );
     }
@@ -530,7 +566,7 @@ mod tests {
             gcs_credential_chain: true,
             ..test_opts()
         };
-        assert_eq!(options.init_script()[1], UQ_CREATE_GCP_CREDENTIAL_CHAIN);
+        assert_eq!(options.init_script()[2], UQ_CREATE_GCP_CREDENTIAL_CHAIN);
     }
 
     #[test]
@@ -540,7 +576,7 @@ mod tests {
             duckdb_ui_port: 14213,
             ..test_opts()
         };
-        assert_eq!(options.init_script()[1], UQ_START_UI_SERVER);
+        assert_eq!(options.init_script()[2], UQ_START_UI_SERVER);
     }
 
     #[test]
@@ -552,14 +588,14 @@ mod tests {
             ic_secret: Some("ic_secret".to_string()),
             ..test_opts()
         };
-        assert_eq!(options.init_script()[0], "LOAD httpfs;");
-        assert_eq!(options.init_script()[1], "LOAD iceberg;");
+        assert_eq!(options.init_script()[1], "LOAD httpfs;");
+        assert_eq!(options.init_script()[2], "LOAD iceberg;");
         assert_eq!(
-            options.init_script()[2],
+            options.init_script()[3],
             "CREATE SECRET ic_secret (TYPE iceberg, CLIENT_ID 'ic_user', CLIENT_SECRET 'ic_secret', ENDPOINT 'https://anycatalog.com/api/catalog');"
         );
         assert_eq!(
-            options.init_script()[3],
+            options.init_script()[4],
             "ATTACH 'my_catalog' AS iceberg (TYPE iceberg, ENDPOINT 'https://anycatalog.com/api/catalog');"
         );
     }
@@ -570,10 +606,10 @@ mod tests {
             allowed_directories: Some(vec!["/home/test".to_string(), "/tmp".to_string()]),
             ..test_opts()
         };
-        assert!(options.init_script()[1].contains("'/home/test'"));
-        assert!(options.init_script()[1].contains("'/tmp'"));
+        assert!(options.init_script()[2].contains("'/home/test'"));
+        assert!(options.init_script()[2].contains("'/tmp'"));
         assert_eq!(
-            options.init_script()[2],
+            options.init_script()[4],
             "SET enable_external_access=false;"
         );
     }
@@ -585,7 +621,7 @@ mod tests {
             ..test_opts()
         };
         assert_eq!(
-            options.init_script()[1],
+            options.init_script()[2],
             "SET allowed_directories = ['https://','gcs://','gs://','gcss://','s3://','/data'];"
         );
     }
@@ -602,7 +638,7 @@ mod tests {
             ..test_opts()
         };
         assert_eq!(
-            options.init_script()[1],
+            options.init_script()[2],
             "SET allowed_directories = ['https://data.example.com/','s3://bucket/reports/','https://','/data'];"
         );
     }
@@ -614,9 +650,10 @@ mod tests {
             allowed_urls: Some(vec![NO_URLS.to_string()]),
             ..test_opts()
         };
-        assert_eq!(options.init_script()[1], "SET allowed_directories = [];");
+        assert_eq!(options.init_script()[2], "SET allowed_directories = [];");
+        assert_eq!(options.init_script()[3], "SET allowed_paths = [];");
         assert_eq!(
-            options.init_script()[2],
+            options.init_script()[4],
             "SET enable_external_access=false;"
         );
     }
@@ -677,6 +714,22 @@ mod tests {
     }
 
     #[test]
+    fn init_script_remote_access_on_duckdb() {
+        let options = Options {
+            allowed_directories: Some(vec![String::new()]),
+            ..test_opts()
+        };
+        let conn = sandboxed_connection(&options);
+        // Remote reads check secrets, including those saved in ~/.duckdb.
+        assert!(conn.execute_batch("FROM duckdb_secrets()").is_ok());
+        // HTTPS needs the CA bundle, but nothing else from its directory.
+        for bundle in CA_BUNDLES.iter().filter(|p| Path::new(p).is_file()) {
+            assert!(can_read(&conn, bundle), "{bundle}");
+        }
+        assert!(conn.execute_batch("FROM glob('/etc/ssl/certs/*')").is_err());
+    }
+
+    #[test]
     fn init_script_without_any_access_on_duckdb() {
         let options = Options {
             allowed_directories: Some(vec![String::new()]),
@@ -686,6 +739,9 @@ mod tests {
         let conn = sandboxed_connection(&options);
         let csv = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/test.csv");
         assert!(!can_read(&conn, csv));
+        for bundle in CA_BUNDLES {
+            assert!(!can_read(&conn, bundle), "{bundle}");
+        }
     }
 
     #[test]
