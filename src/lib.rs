@@ -28,12 +28,11 @@
 //! println!("{} rows", result.num_rows());
 //!
 //! // Or serve the HTTP API: CORS disabled, 30s query timeout, no API key
-//! let router = uquery::web::routers::create_router(
-//!     engine,
-//!     false,
-//!     Some(std::time::Duration::from_secs(30)),
-//!     None,
-//! );
+//! let options = uquery::web::routers::RouterOptions {
+//!     query_timeout: Some(std::time::Duration::from_secs(30)),
+//!     ..Default::default()
+//! };
+//! let router = uquery::web::routers::create_router(engine, options);
 //! let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
 //! axum::serve(listener, router).await?;
 //! # Ok(())

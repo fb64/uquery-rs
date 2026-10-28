@@ -17,6 +17,9 @@ description: "All uQuery CLI flags and UQ_* environment variables: port, connect
 | `--cors-enabled` | `UQ_CORS_ENABLED` | `false` | Enable permissive CORS (all origins), required for [browser clients](#browser-clients) |
 | `--pool-size` | `UQ_POOL_SIZE` | `4` | Number of concurrent DuckDB connections |
 | `--query-timeout-secs` | `UQ_QUERY_TIMEOUT` | `30` | Seconds until a query times out (0 = disabled) |
+| `--max-query-duration-secs` | `UQ_MAX_QUERY_DURATION` | `0` | Maximum total query time, including streaming the result (0 = no limit) |
+| `--memory-limit` | `UQ_MEMORY_LIMIT` | 80% of RAM | DuckDB memory limit, e.g. `4GB` |
+| `--threads` | `UQ_THREADS` | CPU cores | Number of DuckDB worker threads |
 | `--api-key` | `UQ_API_KEY` | — (open) | Require an API key on queries; empty value generates one |
 | `--allow-writes` | `UQ_ALLOW_WRITES` | `false` | Allow statements other than `SELECT` (see [Read-only queries](#read-only-queries)) |
 
@@ -43,6 +46,16 @@ Set to `0` to disable:
 ```bash
 docker run -p 8080:8080 -e UQ_QUERY_TIMEOUT=0 fb64/uquery
 ```
+
+### Resource limits
+
+The query timeout stops at the first result batch: a client can then take as long as it wants to read the result, keeping a pooled connection busy. With a pool of 4 connections, 4 slow clients block every other query. `UQ_MAX_QUERY_DURATION` limits the total time of a query, including streaming its result; a response still streaming at that point is aborted, so the client gets an error rather than a truncated result. Set it whenever µQuery is reachable by untrusted clients:
+
+```bash
+docker run -p 8080:8080 -e UQ_MAX_QUERY_DURATION=600 fb64/uquery
+```
+
+DuckDB uses 80% of the system memory and all CPU cores by default. `UQ_MEMORY_LIMIT` (e.g. `4GB`) and `UQ_THREADS` lower them, for example when µQuery shares a host with other services. Clients cannot change these settings.
 
 ### API key
 

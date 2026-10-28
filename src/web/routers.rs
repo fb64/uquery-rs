@@ -14,17 +14,24 @@ use arrow::ipc::CompressionType;
 use arrow::json::{ArrayWriter, LineDelimitedWriter};
 use arrow::record_batch::RecordBatch;
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::header::{ACCEPT, CONTENT_TYPE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Router, middleware};
+use futures_util::{Stream, StreamExt};
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
+use tokio::io::DuplexStream;
 use tokio::sync::oneshot;
 use tokio::task::spawn_blocking;
+use tokio::time::{Instant, Sleep};
 use tokio_util::io::{ReaderStream, SyncIoBridge};
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
@@ -65,8 +72,11 @@ impl<C: RecordBatchConsumer> RecordBatchConsumer for FirstBatchNotifier<C> {
 struct CancelOnDrop(Option<oneshot::Receiver<Arc<dyn QueryCanceller>>>);
 
 impl CancelOnDrop {
-    fn disarm(mut self) {
-        self.0 = None;
+    /// Stop cancelling on drop and return the canceller, if the query got one.
+    fn disarm(mut self) -> Option<Arc<dyn QueryCanceller>> {
+        self.0
+            .take()
+            .and_then(|mut canceller_rx| canceller_rx.try_recv().ok())
     }
 }
 
@@ -80,20 +90,99 @@ impl Drop for CancelOnDrop {
     }
 }
 
+/// Ends a response body with an error once `deadline` passes, and cancels the query.
+///
+/// Erroring (instead of ending the body) makes the server abort the response, so the
+/// client cannot mistake a truncated result for a complete one. Dropping the body also
+/// unblocks a query thread waiting on a client that stopped reading.
+struct DeadlineStream<S> {
+    inner: Pin<Box<S>>,
+    sleep: Pin<Box<Sleep>>,
+    canceller: Option<Arc<dyn QueryCanceller>>,
+    expired: bool,
+}
+
+impl<S: Stream<Item = io::Result<Bytes>>> Stream for DeadlineStream<S> {
+    type Item = io::Result<Bytes>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        if this.expired {
+            return Poll::Ready(None);
+        }
+        // Checked first: a fast stream is always ready and would never expire.
+        if this.sleep.as_mut().poll(cx).is_ready() {
+            this.expired = true;
+            if let Some(canceller) = this.canceller.take() {
+                canceller.cancel();
+            }
+            return Poll::Ready(Some(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "query exceeded the maximum duration",
+            ))));
+        }
+        this.inner.as_mut().poll_next(cx)
+    }
+}
+
+/// Builds the response body from the query output. The body fails if the query
+/// fails after streaming started or exceeds `deadline`.
+fn response_body(
+    reader: ReaderStream<DuplexStream>,
+    done_rx: oneshot::Receiver<Result<(), EngineError>>,
+    deadline: Option<(Instant, Option<Arc<dyn QueryCanceller>>)>,
+) -> Body {
+    let completion = futures_util::stream::once(async move {
+        match done_rx.await {
+            Ok(Ok(())) => None,
+            Ok(Err(e)) => Some(Err(io::Error::other(e.to_string()))),
+            Err(_) => Some(Err(io::Error::other("query task failed"))),
+        }
+    })
+    .filter_map(std::future::ready);
+    let stream = reader.chain(completion);
+    match deadline {
+        None => Body::from_stream(stream),
+        Some((deadline, canceller)) => Body::from_stream(DeadlineStream {
+            inner: Box::pin(stream),
+            sleep: Box::pin(tokio::time::sleep_until(deadline)),
+            canceller,
+            expired: false,
+        }),
+    }
+}
+
+/// Options of the µQuery HTTP API.
+#[derive(Clone, Debug, Default)]
+pub struct RouterOptions {
+    /// Enable permissive CORS. When disabled, requests from web browsers are rejected.
+    pub cors_enabled: bool,
+    /// Maximum time until the first result batch; the query is cancelled after it.
+    pub query_timeout: Option<Duration>,
+    /// Maximum total time of a query, including streaming its result. A response
+    /// still streaming at that point is aborted.
+    pub max_query_duration: Option<Duration>,
+    /// Require this API key on queries.
+    pub api_key: Option<String>,
+}
+
 pub struct UQueryState {
     pub engine: Arc<dyn UQueryEngine>,
     pub query_timeout: Option<Duration>,
+    pub max_query_duration: Option<Duration>,
 }
 
-pub fn create_router(
-    engine: Arc<dyn UQueryEngine>,
-    cors_enabled: bool,
-    query_timeout: Option<Duration>,
-    api_key: Option<String>,
-) -> Router {
+pub fn create_router(engine: Arc<dyn UQueryEngine>, options: RouterOptions) -> Router {
+    let RouterOptions {
+        cors_enabled,
+        query_timeout,
+        max_query_duration,
+        api_key,
+    } = options;
     let state = Arc::new(UQueryState {
         engine,
         query_timeout,
+        max_query_duration,
     });
     // Arrow responses with negotiated IPC buffer compression are already compressed,
     // so the outer gzip layer skips them.
@@ -143,13 +232,19 @@ async fn query(
         ),
     })?;
 
+    let start = Instant::now();
     let content_type = format.to_string();
     let sql = query_request.get_sql_query().to_string();
     let (tx, rx) = tokio::io::duplex(1024 * 1024);
     let reader_stream = ReaderStream::new(rx);
     let (ready_tx, ready_rx) = oneshot::channel::<Result<(), EngineError>>();
+    let (done_tx, done_rx) = oneshot::channel::<Result<(), EngineError>>();
     let uq_engine = Arc::clone(&state.engine);
-    let query_timeout = state.query_timeout;
+    // The first batch must also arrive within the maximum duration.
+    let query_timeout = match (state.query_timeout, state.max_query_duration) {
+        (Some(timeout), Some(max)) => Some(timeout.min(max)),
+        (timeout, max) => timeout.or(max),
+    };
     let (canceller_tx, canceller_rx) = oneshot::channel::<Arc<dyn QueryCanceller>>();
     let cancel_guard = CancelOnDrop(Some(canceller_rx));
 
@@ -165,7 +260,8 @@ async fn query(
         // Execute. FirstBatchNotifier fires ready_tx on the first batch (or
         // finish for empty results). If execute() fails before any batch is
         // produced, ready_tx is still Some — we forward the error so the client
-        // gets a 400 instead of a dangling request.
+        // gets a 400 instead of a dangling request. Later errors go to done_tx,
+        // which fails the response body.
         let bridge = SyncIoBridge::new(tx);
         macro_rules! stream_with_notifier {
             ($writer:expr) => {{
@@ -173,10 +269,20 @@ async fn query(
                     inner: $writer,
                     ready_tx: Some(ready_tx),
                 };
-                if let Err(e) = prepared.execute(&mut notifier) {
-                    error!("execution failed: {}", e);
-                    if let Some(tx) = notifier.ready_tx.take() {
-                        let _ = tx.send(Err(e));
+                match prepared.execute(&mut notifier) {
+                    Ok(()) => {
+                        let _ = done_tx.send(Ok(()));
+                    }
+                    Err(e) => {
+                        error!("execution failed: {}", e);
+                        match notifier.ready_tx.take() {
+                            Some(tx) => {
+                                let _ = tx.send(Err(e));
+                            }
+                            None => {
+                                let _ = done_tx.send(Err(e));
+                            }
+                        }
                     }
                 }
             }};
@@ -199,7 +305,7 @@ async fn query(
 
     // Timeout covers the time from request start until the first batch is ready;
     // a query still running at that point is cancelled by `cancel_guard`.
-    // Once streaming begins, results are delivered to completion.
+    // Once streaming begins, only the maximum duration applies.
     let ready_result = match query_timeout {
         Some(timeout) => {
             tokio::time::timeout(timeout, ready_rx)
@@ -212,7 +318,7 @@ async fn query(
         }
         None => ready_rx.await,
     };
-    cancel_guard.disarm();
+    let canceller = cancel_guard.disarm();
 
     match ready_result {
         Ok(Ok(())) => {}
@@ -242,7 +348,11 @@ async fn query(
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, content_type)
-        .body(Body::from_stream(reader_stream))
+        .body(response_body(
+            reader_stream,
+            done_rx,
+            state.max_query_duration.map(|max| (start + max, canceller)),
+        ))
         .unwrap())
 }
 

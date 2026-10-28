@@ -33,7 +33,7 @@ pub enum EngineError {
     DuckDb(duckdb::Error),
     /// Arrow failed to encode a result batch.
     Arrow(ArrowError),
-    /// The query was cancelled before it started.
+    /// The query was cancelled before it started or while streaming its result.
     Cancelled,
     /// The query is not allowed, e.g. a write statement on a read-only engine.
     Forbidden(String),

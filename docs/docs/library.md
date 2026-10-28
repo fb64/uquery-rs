@@ -42,7 +42,7 @@ The engine only runs single `SELECT` queries and rejects other statements with `
 
 `query` collects the whole result in memory. To stream large results, call `prepare` and pass a `RecordBatchConsumer` to `execute`. The query handle also gives a `canceller` to stop it from another thread.
 
-Errors are returned as `uquery::core::error::EngineError`, which implements `std::error::Error`: `DuckDb` and `Arrow` wrap the underlying error, `Cancelled` is a query cancelled before it started, `Forbidden` is a statement the engine doesn't allow, and `Consumer` carries any error returned by your own `RecordBatchConsumer`.
+Errors are returned as `uquery::core::error::EngineError`, which implements `std::error::Error`: `DuckDb` and `Arrow` wrap the underlying error, `Cancelled` is a cancelled query, `Forbidden` is a statement the engine doesn't allow, and `Consumer` carries any error returned by your own `RecordBatchConsumer`.
 
 The `duckdb` and `arrow` crates are re-exported as `uquery::duckdb` and `uquery::arrow`, so their versions always match the engine's.
 
@@ -65,11 +65,16 @@ let engine = DuckDbEngine::new(conn, true, 4)?;
 use std::sync::Arc;
 use std::time::Duration;
 
-let router = uquery::web::routers::create_router(
+use uquery::web::routers::{RouterOptions, create_router};
+
+let router = create_router(
     Arc::new(engine),
-    false,                          // permissive CORS
-    Some(Duration::from_secs(30)),  // query timeout
-    Some("my-secret-key".into()),   // API key, None for an open API
+    RouterOptions {
+        cors_enabled: false,                                // reject browser requests
+        query_timeout: Some(Duration::from_secs(30)),       // until the first batch
+        max_query_duration: Some(Duration::from_secs(600)), // including streaming
+        api_key: Some("my-secret-key".into()),              // None for an open API
+    },
 );
 let app = axum::Router::new().nest("/uquery", router);
 let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
