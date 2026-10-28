@@ -194,7 +194,9 @@ impl Options {
 
         if let (Some(key), Some(secret)) = (key_opt, secret_opt) {
             init_script.push(format!(
-                "CREATE SECRET gcs_secret (TYPE GCS, KEY_ID '{key}', SECRET '{secret}');"
+                "CREATE SECRET gcs_secret (TYPE GCS, KEY_ID {}, SECRET {});",
+                sql_string(key),
+                sql_string(secret)
             ));
         } else if self.gcs_credential_chain {
             init_script.push(UQ_CREATE_GCP_CREDENTIAL_CHAIN.to_string());
@@ -208,13 +210,22 @@ impl Options {
             (ic_catalog_endpoint, ic_catalog_name, ic_user, ic_secret)
         {
             init_script.push("LOAD iceberg;".to_string());
-            init_script.push(format!("CREATE SECRET ic_secret (TYPE iceberg, CLIENT_ID '{ic_user}', CLIENT_SECRET '{ic_secret}', ENDPOINT '{ic_catalog_endpoint}');"));
-            init_script.push(format!("ATTACH '{ic_catalog_name}' AS iceberg (TYPE iceberg, ENDPOINT '{ic_catalog_endpoint}');"));
+            let endpoint = sql_string(ic_catalog_endpoint);
+            init_script.push(format!(
+                "CREATE SECRET ic_secret (TYPE iceberg, CLIENT_ID {}, CLIENT_SECRET {}, ENDPOINT {endpoint});",
+                sql_string(ic_user),
+                sql_string(ic_secret)
+            ));
+            init_script.push(format!(
+                "ATTACH {} AS iceberg (TYPE iceberg, ENDPOINT {endpoint});",
+                sql_string(ic_catalog_name)
+            ));
         }
 
         if let Some(db_file) = db_file_opt {
             init_script.push(format!(
-                "ATTACH '{db_file}' as {UQ_ATTACHED_DB_NAME} (READ_ONLY);"
+                "ATTACH {} as {UQ_ATTACHED_DB_NAME} (READ_ONLY);",
+                sql_string(db_file)
             ));
         }
 
@@ -244,11 +255,17 @@ impl Options {
 
         CLOUD_PREFIXES
             .iter()
-            .map(|s| format!("'{s}'"))
-            .chain(local_dirs.iter().map(|s| format!("'{s}'")))
+            .copied()
+            .chain(local_dirs.iter().map(String::as_str))
+            .map(sql_string)
             .collect::<Vec<_>>()
             .join(",")
     }
+}
+
+/// Quote `value` as a SQL string literal.
+fn sql_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 pub fn parse() -> Options {
@@ -366,6 +383,27 @@ mod tests {
             options.init_script()[1],
             "CREATE SECRET gcs_secret (TYPE GCS, KEY_ID 'key_id', SECRET 'secret');"
         );
+    }
+
+    #[test]
+    fn init_query_escapes_quotes() {
+        let options = Options {
+            gcs_key_id: Some("key".to_string()),
+            gcs_secret: Some("it's".to_string()),
+            db_file: Some("/data/o'brien.db".to_string()),
+            allowed_directories: Some(vec!["/data/o'brien".to_string()]),
+            ..test_opts()
+        };
+        let script = options.init_script();
+        assert_eq!(
+            script[1],
+            "CREATE SECRET gcs_secret (TYPE GCS, KEY_ID 'key', SECRET 'it''s');"
+        );
+        assert_eq!(
+            script[2],
+            format!("ATTACH '/data/o''brien.db' as {UQ_ATTACHED_DB_NAME} (READ_ONLY);")
+        );
+        assert!(script[3].ends_with(",'/data/o''brien'];"), "{}", script[3]);
     }
 
     #[test]
