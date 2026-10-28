@@ -72,7 +72,7 @@ let router = uquery::web::routers::create_router(
     Some("my-secret-key".into()),   // API key, None for an open API
 );
 let app = axum::Router::new().nest("/uquery", router);
-let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
 axum::serve(listener, app).await?;
 ```
 

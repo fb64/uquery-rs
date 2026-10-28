@@ -13,12 +13,16 @@ description: "All uQuery CLI flags and UQ_* environment variables: port, connect
 | Flag | Env var | Default | Description |
 |---|---|---|---|
 | `--port` | `UQ_PORT` | `8080` | Port to listen on |
-| `--addr` | `UQ_ADDR` | `0.0.0.0` | Address to listen on |
+| `--addr` | `UQ_ADDR` | `127.0.0.1` | Address to listen on (`0.0.0.0` in the Docker image) |
 | `--cors-enabled` | `UQ_CORS_ENABLED` | `false` | Enable permissive CORS (all origins), required for [browser clients](#browser-clients) |
 | `--pool-size` | `UQ_POOL_SIZE` | `4` | Number of concurrent DuckDB connections |
-| `--query-timeout` | `UQ_QUERY_TIMEOUT` | `30` | Seconds until a query times out (0 = disabled) |
+| `--query-timeout-secs` | `UQ_QUERY_TIMEOUT` | `30` | Seconds until a query times out (0 = disabled) |
 | `--api-key` | `UQ_API_KEY` | — (open) | Require an API key on queries; empty value generates one |
 | `--allow-writes` | `UQ_ALLOW_WRITES` | `false` | Allow statements other than `SELECT` (see [Read-only queries](#read-only-queries)) |
+
+### Listen address
+
+The binary only accepts local connections by default. Use `--addr 0.0.0.0` (or a specific interface address) to accept connections from other hosts, together with an [API key](#api-key). The Docker image sets `UQ_ADDR=0.0.0.0` so that published ports work.
 
 ### Pool size
 

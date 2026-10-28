@@ -37,8 +37,8 @@ pub struct Options {
     #[arg(default_value = "8080", short, long, env = "UQ_PORT")]
     pub port: u16,
 
-    /// Address to listen on
-    #[arg(default_value = "0.0.0.0", short, long, env = "UQ_ADDR")]
+    /// Address to listen on. Use 0.0.0.0 to accept connections from other hosts
+    #[arg(default_value = "127.0.0.1", short, long, env = "UQ_ADDR")]
     pub addr: String,
 
     /// Verbose mode.
