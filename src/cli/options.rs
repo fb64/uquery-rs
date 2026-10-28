@@ -92,7 +92,8 @@ pub struct Options {
     #[arg(long, env = "UQ_ICEBERG_SECRET")]
     pub ic_secret: Option<String>,
 
-    #[arg(long, env = "UQ_ALLOWED_DIRECTORIES")]
+    /// Comma-separated local directories queries can read (default: the current directory)
+    #[arg(long, env = "UQ_ALLOWED_DIRECTORIES", value_delimiter = ',')]
     pub allowed_directories: Option<Vec<String>>,
 
     /// Allow statements other than SELECT (COPY, CREATE, ATTACH, USE, ...). All
@@ -383,6 +384,26 @@ mod tests {
         );
         assert!(Options::try_parse_from(["uquery", "--yes"]).is_err());
         assert!(Options::try_parse_from(["uquery", "--self-update", "--check-update"]).is_err());
+    }
+
+    #[test]
+    fn parse_allowed_directories() {
+        let parse = |args: &[&str]| Options::try_parse_from(args).unwrap().allowed_directories;
+        let expected = Some(vec!["/a".to_string(), "/b".to_string()]);
+        assert_eq!(
+            parse(&["uquery", "--allowed-directories", "/a,/b"]),
+            expected
+        );
+        assert_eq!(
+            parse(&[
+                "uquery",
+                "--allowed-directories",
+                "/a",
+                "--allowed-directories",
+                "/b"
+            ]),
+            expected
+        );
     }
 
     #[test]
