@@ -201,6 +201,12 @@ Options:
           Number of pre-cloned DuckDB connections kept in the pool [env: UQ_POOL_SIZE=] [default: 4]
       --query-timeout-secs <QUERY_TIMEOUT_SECS>
           Maximum query execution time in seconds (0 = no timeout) [env: UQ_QUERY_TIMEOUT=] [default: 30]
+      --max-query-duration-secs <MAX_QUERY_DURATION_SECS>
+          Maximum total query time in seconds, including streaming the result. A response still streaming at that point is aborted (0 = no limit) [env: UQ_MAX_QUERY_DURATION=] [default: 0]
+      --memory-limit <MEMORY_LIMIT>
+          DuckDB memory limit, e.g. 4GB (default: 80% of the system memory) [env: UQ_MEMORY_LIMIT=]
+      --threads <THREADS>
+          Number of DuckDB worker threads (default: number of CPU cores) [env: UQ_THREADS=]
       --api-key [<API_KEY>]
           Require this API key on queries, sent as `Authorization: Bearer <key>` or `X-API-Key: <key>`. Without a value, a key is generated and printed at startup. When the option is absent, the API is open [env: UQ_API_KEY=]
       --install-extensions

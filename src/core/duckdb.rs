@@ -117,6 +117,12 @@ struct DuckDbCanceller {
     state: Mutex<CancelState>,
 }
 
+impl DuckDbCanceller {
+    fn is_cancelled(&self) -> bool {
+        self.state.lock().unwrap().cancelled
+    }
+}
+
 impl QueryCanceller for DuckDbCanceller {
     fn cancel(&self) {
         let mut state = self.state.lock().unwrap();
@@ -148,7 +154,7 @@ impl ExecutableQuery for DuckDbQuery {
     fn execute(&mut self, consumer: &mut dyn RecordBatchConsumer) -> Result<(), EngineError> {
         // DuckDB ignores an interrupt received while the connection is idle, so a
         // cancel that lands before the query starts must be checked here.
-        if self.canceller.state.lock().unwrap().cancelled {
+        if self.canceller.is_cancelled() {
             return Err(EngineError::Cancelled);
         }
         let conn = self.conn.as_ref().expect("connection already consumed");
@@ -160,7 +166,12 @@ impl ExecutableQuery for DuckDbQuery {
         let arrow = stmt.query_arrow([])?;
         debug!("run: [{}] in {:?}", self.sql, start.elapsed());
         consumer.on_schema(arrow.get_schema())?;
+        // The result is fully computed before the first batch, so an interrupt has
+        // no effect while streaming it: check for cancellation between batches.
         for batch in arrow {
+            if self.canceller.is_cancelled() {
+                return Err(EngineError::Cancelled);
+            }
             consumer.on_batch(batch)?;
         }
         consumer.finish()
@@ -334,6 +345,34 @@ mod tests {
         engine.query("ATTACH ':memory:' AS other").unwrap();
         engine.query("USE other").unwrap();
         assert_eq!(query_value(&engine, "SELECT current_database()"), "memory");
+    }
+
+    struct CancellingConsumer(Arc<dyn QueryCanceller>, usize);
+
+    impl RecordBatchConsumer for CancellingConsumer {
+        fn on_schema(&mut self, _schema: SchemaRef) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        fn on_batch(&mut self, _batch: RecordBatch) -> Result<(), EngineError> {
+            self.1 += 1;
+            self.0.cancel();
+            Ok(())
+        }
+
+        fn finish(&mut self) -> Result<(), EngineError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn cancel_while_streaming_test() {
+        let engine = make_engine();
+        let mut query = engine.prepare("SELECT * FROM range(1000000)").unwrap();
+        let mut consumer = CancellingConsumer(query.canceller(), 0);
+        let result = query.execute(&mut consumer);
+        assert!(matches!(result, Err(EngineError::Cancelled)), "{result:?}");
+        assert_eq!(consumer.1, 1);
     }
 
     #[test]

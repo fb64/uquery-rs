@@ -108,6 +108,19 @@ pub struct Options {
     #[arg(default_value = "30", long, env = "UQ_QUERY_TIMEOUT")]
     pub query_timeout_secs: u64,
 
+    /// Maximum total query time in seconds, including streaming the result. A
+    /// response still streaming at that point is aborted (0 = no limit)
+    #[arg(default_value = "0", long, env = "UQ_MAX_QUERY_DURATION")]
+    pub max_query_duration_secs: u64,
+
+    /// DuckDB memory limit, e.g. 4GB (default: 80% of the system memory)
+    #[arg(long, env = "UQ_MEMORY_LIMIT")]
+    pub memory_limit: Option<String>,
+
+    /// Number of DuckDB worker threads (default: number of CPU cores)
+    #[arg(long, env = "UQ_THREADS")]
+    pub threads: Option<usize>,
+
     /// Require this API key on queries, sent as `Authorization: Bearer <key>` or
     /// `X-API-Key: <key>`. Without a value, a key is generated and printed at
     /// startup. When the option is absent, the API is open.
@@ -239,6 +252,13 @@ impl Options {
             init_script.push("SET enable_external_access=false;".to_string());
         }
 
+        if let Some(memory_limit) = &self.memory_limit {
+            init_script.push(format!("SET memory_limit = {};", sql_string(memory_limit)));
+        }
+        if let Some(threads) = self.threads {
+            init_script.push(format!("SET threads = {threads};"));
+        }
+
         init_script.push("SET lock_configuration = true;".to_string());
         init_script
     }
@@ -309,6 +329,9 @@ mod tests {
             allow_writes: false,
             pool_size: 4,
             query_timeout_secs: 30,
+            max_query_duration_secs: 0,
+            memory_limit: None,
+            threads: None,
             install_extensions: false,
             api_key: None,
             self_update: false,
@@ -404,6 +427,21 @@ mod tests {
             format!("ATTACH '/data/o''brien.db' as {UQ_ATTACHED_DB_NAME} (READ_ONLY);")
         );
         assert!(script[3].ends_with(",'/data/o''brien'];"), "{}", script[3]);
+    }
+
+    #[test]
+    fn init_resource_limits() {
+        let options = Options {
+            memory_limit: Some("4GB".to_string()),
+            threads: Some(2),
+            allowed_directories: Some(vec!["/data".to_string()]),
+            ..test_opts()
+        };
+        let script = options.init_script();
+        let n = script.len();
+        assert_eq!(script[n - 3], "SET memory_limit = '4GB';");
+        assert_eq!(script[n - 2], "SET threads = 2;");
+        assert_eq!(script[n - 1], "SET lock_configuration = true;");
     }
 
     #[test]

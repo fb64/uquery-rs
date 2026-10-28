@@ -3,7 +3,7 @@ use crate::core::engine::{ExecutableQuery, QueryCanceller, RecordBatchConsumer, 
 use crate::core::error::EngineError;
 use crate::web::request::QueryRequest;
 use crate::web::response::QueryResponseFormat;
-use crate::web::routers::create_router;
+use crate::web::routers::{RouterOptions, create_router};
 use arrow::ipc::{CompressionType, root_as_message};
 use axum::body::Body;
 use axum::http;
@@ -89,7 +89,7 @@ async fn query_without_accept_defaults_to_json_test() {
         .header(CONTENT_TYPE, "text/plain")
         .body(Body::from(TEST_QUERY))
         .unwrap();
-    let response = create_router(make_engine(false), false, None, None)
+    let response = create_router(make_engine(false), RouterOptions::default())
         .oneshot(request)
         .await
         .unwrap();
@@ -110,7 +110,7 @@ async fn query_with_non_ascii_accept_is_not_acceptable_test() {
         .header(ACCEPT, HeaderValue::from_bytes(b"text/caf\xe9").unwrap())
         .body(Body::from(TEST_QUERY))
         .unwrap();
-    let response = create_router(make_engine(false), false, None, None)
+    let response = create_router(make_engine(false), RouterOptions::default())
         .oneshot(request)
         .await
         .unwrap();
@@ -243,7 +243,7 @@ async fn query_attached_db_test() {
     )
     .unwrap();
     let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
-    let response = create_router(engine, false, None, None)
+    let response = create_router(engine, RouterOptions::default())
         .oneshot(builder.body(Body::from(json)).unwrap())
         .await
         .unwrap();
@@ -266,10 +266,16 @@ async fn cors_enabled_test() {
 
     let conn = Connection::open_in_memory().unwrap();
     let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, false, 2).unwrap());
-    let response = create_router(engine, true, None, None)
-        .oneshot(builder.body(Body::empty()).unwrap())
-        .await
-        .unwrap();
+    let response = create_router(
+        engine,
+        RouterOptions {
+            cors_enabled: true,
+            ..Default::default()
+        },
+    )
+    .oneshot(builder.body(Body::empty()).unwrap())
+    .await
+    .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
@@ -430,7 +436,7 @@ async fn query_attached_macro_table_test() {
     )
     .unwrap();
     let engine: Arc<dyn UQueryEngine> = Arc::new(DuckDbEngine::new(conn, true, 2).unwrap());
-    let response = create_router(engine, false, None, None)
+    let response = create_router(engine, RouterOptions::default())
         .oneshot(builder.body(Body::from(json)).unwrap())
         .await
         .unwrap();
@@ -459,10 +465,16 @@ async fn query_timeout_test() {
             serde_json::to_string(&QueryRequest::new("SELECT 1".to_string())).unwrap(),
         ))
         .unwrap();
-    let response = create_router(engine, false, Some(Duration::from_millis(50)), None)
-        .oneshot(request)
-        .await
-        .unwrap();
+    let response = create_router(
+        engine,
+        RouterOptions {
+            query_timeout: Some(Duration::from_millis(50)),
+            ..Default::default()
+        },
+    )
+    .oneshot(request)
+    .await
+    .unwrap();
     assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
 }
 
@@ -472,7 +484,13 @@ async fn query_timeout_cancels_query_test() {
     // one was cancelled and released its connection.
     let engine: Arc<dyn UQueryEngine> =
         Arc::new(DuckDbEngine::new(Connection::open_in_memory().unwrap(), false, 1).unwrap());
-    let router = create_router(engine, false, Some(Duration::from_millis(500)), None);
+    let router = create_router(
+        engine,
+        RouterOptions {
+            query_timeout: Some(Duration::from_millis(500)),
+            ..Default::default()
+        },
+    );
     let request = |sql: &str| {
         Request::builder()
             .method(http::Method::POST)
@@ -500,7 +518,13 @@ async fn query_timeout_cancels_query_test() {
 
 #[tokio::test]
 async fn query_api_key_test() {
-    let router = create_router(make_engine(false), false, None, Some("secret".to_string()));
+    let router = create_router(
+        make_engine(false),
+        RouterOptions {
+            api_key: Some("secret".to_string()),
+            ..Default::default()
+        },
+    );
     let request = |header: Option<(&str, &str)>| {
         let mut builder = Request::builder()
             .method(http::Method::POST)
@@ -566,7 +590,7 @@ async fn perform_json_request_compress(
     if compress {
         builder = builder.header(ACCEPT_ENCODING, "gzip");
     }
-    create_router(make_engine(false), false, None, None)
+    create_router(make_engine(false), RouterOptions::default())
         .oneshot(builder.body(Body::from(json)).unwrap())
         .await
         .unwrap()
@@ -581,7 +605,7 @@ async fn perform_arrow_request(accept: &str, accept_encoding: Option<&str>) -> R
     if let Some(encoding) = accept_encoding {
         builder = builder.header(ACCEPT_ENCODING, encoding);
     }
-    create_router(make_engine(false), false, None, None)
+    create_router(make_engine(false), RouterOptions::default())
         .oneshot(builder.body(Body::from(TEST_QUERY)).unwrap())
         .await
         .unwrap()
@@ -609,7 +633,7 @@ async fn perform_plain_text_request(sql: String, format: QueryResponseFormat) ->
         .uri("/")
         .header(CONTENT_TYPE, "text/plain")
         .header(ACCEPT, format.to_string());
-    create_router(make_engine(false), false, None, None)
+    create_router(make_engine(false), RouterOptions::default())
         .oneshot(builder.body(Body::from(sql)).unwrap())
         .await
         .unwrap()
@@ -643,7 +667,7 @@ fn browser_query(sql: &str) -> Request<Body> {
 
 #[tokio::test]
 async fn browser_request_rejected_without_cors_test() {
-    let response = create_router(make_engine(false), false, None, None)
+    let response = create_router(make_engine(false), RouterOptions::default())
         .oneshot(browser_query("SELECT 1"))
         .await
         .unwrap();
@@ -652,10 +676,16 @@ async fn browser_request_rejected_without_cors_test() {
 
 #[tokio::test]
 async fn browser_request_allowed_with_cors_test() {
-    let response = create_router(make_engine(false), true, None, None)
-        .oneshot(browser_query("SELECT 1"))
-        .await
-        .unwrap();
+    let response = create_router(
+        make_engine(false),
+        RouterOptions {
+            cors_enabled: true,
+            ..Default::default()
+        },
+    )
+    .oneshot(browser_query("SELECT 1"))
+    .await
+    .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 }
 
@@ -670,4 +700,111 @@ async fn write_statement_forbidden_test() {
     let error: Value = serde_json::from_slice(&read_response(response).await).unwrap();
     assert_eq!(error["title"], "Forbidden Query");
     assert_eq!(error["detail"], "only SELECT queries are allowed");
+}
+
+fn csv_query(sql: &str) -> Request<Body> {
+    Request::builder()
+        .method(http::Method::POST)
+        .uri("/")
+        .header(CONTENT_TYPE, "text/plain")
+        .header(ACCEPT, "text/csv")
+        .body(Body::from(sql.to_string()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn max_query_duration_aborts_streaming_test() {
+    let router = create_router(
+        make_engine(false),
+        RouterOptions {
+            max_query_duration: Some(Duration::from_secs(2)),
+            ..Default::default()
+        },
+    );
+    let start = std::time::Instant::now();
+    // ~20 MB of CSV, more than the 1 MiB stream buffer: the query thread blocks
+    // until the client reads.
+    let response = router
+        .clone()
+        .oneshot(csv_query("SELECT * FROM range(3000000)"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    // A client that stops reading past the deadline.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await;
+    assert!(body.is_err(), "a truncated result must not end cleanly");
+    assert!(start.elapsed() < Duration::from_secs(10));
+    // The aborted query released its connection: more queries than the pool size
+    // (2) still run.
+    for _ in 0..3 {
+        let response = tokio::time::timeout(
+            Duration::from_secs(5),
+            router.clone().oneshot(csv_query("SELECT 1 AS n")),
+        )
+        .await
+        .expect("connection not released")
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(read_response(response).await, b"n\n1\n");
+    }
+}
+
+#[tokio::test]
+async fn max_query_duration_keeps_fast_queries_test() {
+    let router = create_router(
+        make_engine(false),
+        RouterOptions {
+            max_query_duration: Some(Duration::from_secs(30)),
+            ..Default::default()
+        },
+    );
+    let response = router
+        .oneshot(csv_query("SELECT * FROM range(3) t(n)"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(read_response(response).await, b"n\n0\n1\n2\n");
+}
+
+struct FailingEngine;
+
+impl UQueryEngine for FailingEngine {
+    fn prepare(&self, _sql: &str) -> Result<Box<dyn ExecutableQuery>, EngineError> {
+        Ok(Box::new(FailingQuery))
+    }
+}
+
+/// Streams one batch, then fails.
+struct FailingQuery;
+
+impl ExecutableQuery for FailingQuery {
+    fn execute(&mut self, consumer: &mut dyn RecordBatchConsumer) -> Result<(), EngineError> {
+        let schema = Arc::new(arrow::datatypes::Schema::new(vec![
+            arrow::datatypes::Field::new("n", arrow::datatypes::DataType::Int32, false),
+        ]));
+        let batch = arrow::record_batch::RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(arrow::array::Int32Array::from(vec![1, 2, 3]))],
+        )
+        .unwrap();
+        consumer.on_schema(schema)?;
+        consumer.on_batch(batch)?;
+        Err(EngineError::Consumer("failed while streaming".into()))
+    }
+
+    fn canceller(&self) -> Arc<dyn QueryCanceller> {
+        Arc::new(NoopCanceller)
+    }
+}
+
+#[tokio::test]
+async fn error_while_streaming_fails_body_test() {
+    let response = create_router(Arc::new(FailingEngine), RouterOptions::default())
+        .oneshot(csv_query("SELECT 1"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await;
+    assert!(body.is_err(), "a truncated result must not end cleanly");
 }

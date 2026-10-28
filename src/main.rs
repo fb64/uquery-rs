@@ -76,6 +76,10 @@ fn main() {
             0 => None,
             secs => Some(std::time::Duration::from_secs(secs)),
         };
+        let max_query_duration = match cli_options.max_query_duration_secs {
+            0 => None,
+            secs => Some(std::time::Duration::from_secs(secs)),
+        };
         let api_key = cli_options.api_key.map(|key| {
             if key.is_empty() {
                 let key = web::auth::generate_api_key();
@@ -86,8 +90,15 @@ fn main() {
                 key
             }
         });
-        let router =
-            web::routers::create_router(engine, cli_options.cors_enabled, query_timeout, api_key);
+        let router = web::routers::create_router(
+            engine,
+            web::routers::RouterOptions {
+                cors_enabled: cli_options.cors_enabled,
+                query_timeout,
+                max_query_duration,
+                api_key,
+            },
+        );
         axum::serve(listener, router)
             .with_graceful_shutdown(shutdown_signal())
             .await
