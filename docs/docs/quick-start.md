@@ -166,7 +166,7 @@ Options:
   -p, --port <PORT>
           Port to listen on [env: UQ_PORT=] [default: 8080]
   -a, --addr <ADDR>
-          Address to listen on [env: UQ_ADDR=] [default: 0.0.0.0]
+          Address to listen on. Use 0.0.0.0 to accept connections from other hosts [env: UQ_ADDR=] [default: 127.0.0.1]
   -v, --verbose...
           Verbose mode
       --gcs-key-id <GCS_KEY_ID>
@@ -195,17 +195,26 @@ Options:
           [env: UQ_ICEBERG_SECRET=]
       --allowed-directories <ALLOWED_DIRECTORIES>
           [env: UQ_ALLOWED_DIRECTORIES=]
+      --allow-writes
+          Allow statements other than SELECT (COPY, CREATE, ATTACH, USE, ...). All clients share the same database: only enable this for trusted clients [env: UQ_ALLOW_WRITES=]
       --pool-size <POOL_SIZE>
           Number of pre-cloned DuckDB connections kept in the pool [env: UQ_POOL_SIZE=] [default: 4]
       --query-timeout-secs <QUERY_TIMEOUT_SECS>
           Maximum query execution time in seconds (0 = no timeout) [env: UQ_QUERY_TIMEOUT=] [default: 30]
+      --api-key [<API_KEY>]
+          Require this API key on queries, sent as `Authorization: Bearer <key>` or `X-API-Key: <key>`. Without a value, a key is generated and printed at startup. When the option is absent, the API is open [env: UQ_API_KEY=]
       --install-extensions
           Install all DuckDB extensions and exit. Use this once after installation to pre-download extensions so the server starts without network access [env: UQ_INSTALL_EXTENSIONS=]
+      --self-update
+          Update uQuery to the latest GitHub release and exit
+      --check-update
+          Check for a newer GitHub release, print its release notes and exit
+  -y, --yes
+          Do not ask for confirmation before installing an update
   -h, --help
           Print help
   -V, --version
           Print version
-
 ```
 
 See [Configuration](./configuration.md) for a full reference of all options.

@@ -22,6 +22,8 @@ RUN curl https://install.duckdb.org | sh \
     && rm /usr/local/bin/duckdb
 
 EXPOSE 8080
+# Accept connections from outside the container (the binary defaults to 127.0.0.1)
+ENV UQ_ADDR=0.0.0.0
 ARG TARGETARCH
 COPY bin/uquery-${TARGETARCH} /usr/local/bin/uquery
 WORKDIR /tmp
