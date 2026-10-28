@@ -131,7 +131,7 @@ pub struct Options {
 
     /// Maximum total query time in seconds, including streaming the result. A
     /// response still streaming at that point is aborted (0 = no limit)
-    #[arg(default_value = "0", long, env = "UQ_MAX_QUERY_DURATION")]
+    #[arg(default_value = "600", long, env = "UQ_MAX_QUERY_DURATION")]
     pub max_query_duration_secs: u64,
 
     /// DuckDB memory limit, e.g. 4GB (default: 80% of the system memory)
@@ -453,6 +453,17 @@ mod tests {
         );
         assert!(Options::try_parse_from(["uquery", "--yes"]).is_err());
         assert!(Options::try_parse_from(["uquery", "--self-update", "--check-update"]).is_err());
+    }
+
+    #[test]
+    fn parse_max_query_duration() {
+        let parse = |args: &[&str]| {
+            Options::try_parse_from(args)
+                .unwrap()
+                .max_query_duration_secs
+        };
+        assert_eq!(parse(&["uquery"]), 600);
+        assert_eq!(parse(&["uquery", "--max-query-duration-secs", "0"]), 0);
     }
 
     #[test]
