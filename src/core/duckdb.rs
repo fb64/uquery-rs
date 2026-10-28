@@ -1,4 +1,5 @@
 use crate::core::engine::{ExecutableQuery, QueryCanceller, RecordBatchConsumer, UQueryEngine};
+use crate::core::error::EngineError;
 use duckdb::{Connection, InterruptHandle};
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
@@ -15,13 +16,12 @@ struct ConnectionPool {
 }
 
 impl ConnectionPool {
-    fn new(root: &Connection, size: usize, attached: bool) -> Result<Self, String> {
+    fn new(root: &Connection, size: usize, attached: bool) -> Result<Self, EngineError> {
         let mut conns = VecDeque::with_capacity(size);
         for _ in 0..size {
-            let conn = root.try_clone().map_err(|e| e.to_string())?;
+            let conn = root.try_clone()?;
             if attached {
-                conn.execute(format!("USE {UQ_ATTACHED_DB_NAME};").as_str(), [])
-                    .map_err(|e| e.to_string())?;
+                conn.execute(format!("USE {UQ_ATTACHED_DB_NAME};").as_str(), [])?;
             }
             conns.push_back(conn);
         }
@@ -52,7 +52,11 @@ pub struct DuckDbEngine {
 }
 
 impl DuckDbEngine {
-    pub fn new(connection: Connection, attached: bool, pool_size: usize) -> Result<Self, String> {
+    pub fn new(
+        connection: Connection,
+        attached: bool,
+        pool_size: usize,
+    ) -> Result<Self, EngineError> {
         Ok(Self {
             pool: Arc::new(ConnectionPool::new(&connection, pool_size, attached)?),
         })
@@ -60,7 +64,7 @@ impl DuckDbEngine {
 }
 
 impl UQueryEngine for DuckDbEngine {
-    fn prepare(&self, sql: &str) -> Result<Box<dyn ExecutableQuery>, String> {
+    fn prepare(&self, sql: &str) -> Result<Box<dyn ExecutableQuery>, EngineError> {
         let conn = self.pool.acquire();
         let canceller = Arc::new(DuckDbCanceller {
             state: Mutex::new(CancelState {
@@ -115,16 +119,16 @@ impl Drop for DuckDbQuery {
 }
 
 impl ExecutableQuery for DuckDbQuery {
-    fn execute(&mut self, consumer: &mut dyn RecordBatchConsumer) -> Result<(), String> {
+    fn execute(&mut self, consumer: &mut dyn RecordBatchConsumer) -> Result<(), EngineError> {
         // DuckDB ignores an interrupt received while the connection is idle, so a
         // cancel that lands before the query starts must be checked here.
         if self.canceller.state.lock().unwrap().cancelled {
-            return Err("query cancelled".to_string());
+            return Err(EngineError::Cancelled);
         }
         let conn = self.conn.as_ref().expect("connection already consumed");
         let start = Instant::now();
-        let mut stmt = conn.prepare(&self.sql).map_err(|e| e.to_string())?;
-        let arrow = stmt.query_arrow([]).map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare(&self.sql)?;
+        let arrow = stmt.query_arrow([])?;
         debug!("run: [{}] in {:?}", self.sql, start.elapsed());
         consumer.on_schema(arrow.get_schema())?;
         for batch in arrow {
@@ -148,16 +152,16 @@ mod tests {
     struct CountingConsumer(usize);
 
     impl RecordBatchConsumer for CountingConsumer {
-        fn on_schema(&mut self, _schema: SchemaRef) -> Result<(), String> {
+        fn on_schema(&mut self, _schema: SchemaRef) -> Result<(), EngineError> {
             Ok(())
         }
 
-        fn on_batch(&mut self, batch: RecordBatch) -> Result<(), String> {
+        fn on_batch(&mut self, batch: RecordBatch) -> Result<(), EngineError> {
             self.0 += batch.num_rows();
             Ok(())
         }
 
-        fn finish(&mut self) -> Result<(), String> {
+        fn finish(&mut self) -> Result<(), EngineError> {
             Ok(())
         }
     }
@@ -180,7 +184,7 @@ mod tests {
         });
         let result = query.execute(&mut CountingConsumer(0));
         cancel_thread.join().unwrap();
-        assert!(result.unwrap_err().contains("Interrupted"));
+        assert!(result.unwrap_err().to_string().contains("Interrupted"));
         assert!(start.elapsed() < Duration::from_secs(10));
     }
 
@@ -189,10 +193,10 @@ mod tests {
         let engine = make_engine();
         let mut query = engine.prepare("SELECT 1").unwrap();
         query.canceller().cancel();
-        assert_eq!(
+        assert!(matches!(
             query.execute(&mut CountingConsumer(0)),
-            Err("query cancelled".to_string())
-        );
+            Err(EngineError::Cancelled)
+        ));
     }
 
     #[test]

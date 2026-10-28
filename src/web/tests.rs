@@ -1,5 +1,6 @@
 use crate::core::duckdb::{DuckDbEngine, UQ_ATTACHED_DB_NAME};
 use crate::core::engine::{ExecutableQuery, QueryCanceller, RecordBatchConsumer, UQueryEngine};
+use crate::core::error::EngineError;
 use crate::web::request::QueryRequest;
 use crate::web::response::QueryResponseFormat;
 use crate::web::routers::create_router;
@@ -27,7 +28,7 @@ use tower::ServiceExt;
 struct SlowEngine(Duration);
 
 impl UQueryEngine for SlowEngine {
-    fn prepare(&self, _sql: &str) -> Result<Box<dyn ExecutableQuery>, String> {
+    fn prepare(&self, _sql: &str) -> Result<Box<dyn ExecutableQuery>, EngineError> {
         std::thread::sleep(self.0);
         Ok(Box::new(SlowQuery))
     }
@@ -36,7 +37,7 @@ impl UQueryEngine for SlowEngine {
 struct SlowQuery;
 
 impl ExecutableQuery for SlowQuery {
-    fn execute(&mut self, consumer: &mut dyn RecordBatchConsumer) -> Result<(), String> {
+    fn execute(&mut self, consumer: &mut dyn RecordBatchConsumer) -> Result<(), EngineError> {
         consumer.finish()
     }
 

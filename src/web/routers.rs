@@ -1,5 +1,5 @@
 use crate::core::engine::{QueryCanceller, RecordBatchConsumer, UQueryEngine};
-use crate::core::error::UQueryError;
+use crate::core::error::{EngineError, UQueryError};
 use crate::web::auth::require_api_key;
 use crate::web::consumers::{ArrowConsumer, WriterConsumer};
 use crate::web::request::QueryRequest;
@@ -36,22 +36,22 @@ use tracing::error;
 /// empty results), signaling that DuckDB has produced its first result.
 struct FirstBatchNotifier<C: RecordBatchConsumer> {
     inner: C,
-    ready_tx: Option<oneshot::Sender<Result<(), String>>>,
+    ready_tx: Option<oneshot::Sender<Result<(), EngineError>>>,
 }
 
 impl<C: RecordBatchConsumer> RecordBatchConsumer for FirstBatchNotifier<C> {
-    fn on_schema(&mut self, schema: SchemaRef) -> Result<(), String> {
+    fn on_schema(&mut self, schema: SchemaRef) -> Result<(), EngineError> {
         self.inner.on_schema(schema)
     }
 
-    fn on_batch(&mut self, batch: RecordBatch) -> Result<(), String> {
+    fn on_batch(&mut self, batch: RecordBatch) -> Result<(), EngineError> {
         if let Some(tx) = self.ready_tx.take() {
             let _ = tx.send(Ok(()));
         }
         self.inner.on_batch(batch)
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), EngineError> {
         // Empty result set: no batches were produced, signal ready here.
         if let Some(tx) = self.ready_tx.take() {
             let _ = tx.send(Ok(()));
@@ -144,7 +144,7 @@ async fn query(
     let sql = query_request.get_sql_query().to_string();
     let (tx, rx) = tokio::io::duplex(1024 * 1024);
     let reader_stream = ReaderStream::new(rx);
-    let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
+    let (ready_tx, ready_rx) = oneshot::channel::<Result<(), EngineError>>();
     let uq_engine = Arc::clone(&state.engine);
     let query_timeout = state.query_timeout;
     let (canceller_tx, canceller_rx) = oneshot::channel::<Arc<dyn QueryCanceller>>();
@@ -171,10 +171,10 @@ async fn query(
                     ready_tx: Some(ready_tx),
                 };
                 if let Err(e) = prepared.execute(&mut notifier) {
-                    if let Some(tx) = notifier.ready_tx.take() {
-                        let _ = tx.send(Err(e.clone()));
-                    }
                     error!("execution failed: {}", e);
+                    if let Some(tx) = notifier.ready_tx.take() {
+                        let _ = tx.send(Err(e));
+                    }
                 }
             }};
         }
@@ -217,7 +217,7 @@ async fn query(
             return Err(UQueryError {
                 status_code: StatusCode::BAD_REQUEST.as_u16(),
                 title: "SQL Error".to_string(),
-                detail: err,
+                detail: err.to_string(),
             });
         }
         Err(_) => {

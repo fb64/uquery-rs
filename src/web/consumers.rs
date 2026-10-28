@@ -1,4 +1,5 @@
 use crate::core::engine::RecordBatchConsumer;
+use crate::core::error::EngineError;
 use arrow::datatypes::SchemaRef;
 use arrow::ipc::CompressionType;
 use arrow::ipc::writer::{IpcWriteOptions, StreamWriter};
@@ -21,24 +22,24 @@ impl<W: RecordBatchWriter + Send> WriterConsumer<W> {
 }
 
 impl<W: RecordBatchWriter + Send> RecordBatchConsumer for WriterConsumer<W> {
-    fn on_schema(&mut self, _schema: SchemaRef) -> Result<(), String> {
+    fn on_schema(&mut self, _schema: SchemaRef) -> Result<(), EngineError> {
         Ok(())
     }
 
-    fn on_batch(&mut self, batch: RecordBatch) -> Result<(), String> {
+    fn on_batch(&mut self, batch: RecordBatch) -> Result<(), EngineError> {
         self.writer
             .as_mut()
             .unwrap()
             .write(&batch)
-            .map_err(|e| e.to_string())
+            .map_err(EngineError::from)
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), EngineError> {
         self.writer
             .take()
             .unwrap()
             .close()
-            .map_err(|e| e.to_string())
+            .map_err(EngineError::from)
     }
 }
 
@@ -62,23 +63,22 @@ impl<W: Write + Send> ArrowConsumer<W> {
 }
 
 impl<W: Write + Send> RecordBatchConsumer for ArrowConsumer<W> {
-    fn on_schema(&mut self, schema: SchemaRef) -> Result<(), String> {
+    fn on_schema(&mut self, schema: SchemaRef) -> Result<(), EngineError> {
         let sink = self.sink.take().unwrap();
-        let write_options = IpcWriteOptions::default()
-            .try_with_compression(self.compression)
-            .map_err(|e| e.to_string())?;
-        self.inner.writer = Some(
-            StreamWriter::try_new_with_options(sink, &schema, write_options)
-                .map_err(|e| e.to_string())?,
-        );
+        let write_options = IpcWriteOptions::default().try_with_compression(self.compression)?;
+        self.inner.writer = Some(StreamWriter::try_new_with_options(
+            sink,
+            &schema,
+            write_options,
+        )?);
         Ok(())
     }
 
-    fn on_batch(&mut self, batch: RecordBatch) -> Result<(), String> {
+    fn on_batch(&mut self, batch: RecordBatch) -> Result<(), EngineError> {
         self.inner.on_batch(batch)
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), EngineError> {
         self.inner.finish()
     }
 }
