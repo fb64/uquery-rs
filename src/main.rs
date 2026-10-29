@@ -80,6 +80,7 @@ fn main() {
             0 => None,
             secs => Some(std::time::Duration::from_secs(secs)),
         };
+        let redacted_paths = cli_options.redacted_paths();
         let api_key = cli_options.api_key.map(|key| {
             if key.is_empty() {
                 let key = web::auth::generate_api_key();
@@ -97,6 +98,7 @@ fn main() {
                 query_timeout,
                 max_query_duration,
                 api_key,
+                redacted_paths,
             },
         );
         axum::serve(listener, router)

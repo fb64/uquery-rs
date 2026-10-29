@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::metadata::LevelFilter;
 use tracing::warn;
 use tracing_subscriber::EnvFilter;
@@ -302,15 +302,42 @@ impl Options {
         init_script
     }
 
-    fn get_allowed_directories(&self) -> String {
-        let local_dirs: Vec<String> = self.allowed_directories.clone().unwrap_or_else(|| {
+    /// Server paths to hide from the SQL errors sent to clients, with their replacement.
+    pub fn redacted_paths(&self) -> Vec<(PathBuf, String)> {
+        let absolute = |path: &str| std::path::absolute(path).unwrap_or_else(|_| path.into());
+        let mut paths: Vec<(PathBuf, String)> = self
+            .local_directories()
+            .iter()
+            .filter(|dir| !dir.is_empty())
+            .map(|dir| (absolute(dir), String::new()))
+            .collect();
+        if let Some(db_file) = &self.db_file {
+            let path = absolute(db_file);
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned());
+            paths.push((path, name.unwrap_or_default()));
+        }
+        if let Some(home) = env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")) {
+            paths.push((home.into(), "~".to_string()));
+        }
+        paths
+    }
+
+    /// Local directories from `--allowed-directories`, or the current directory by default.
+    fn local_directories(&self) -> Vec<String> {
+        self.allowed_directories.clone().unwrap_or_else(|| {
             env::current_dir()
                 .map(|dir| vec![dir.to_string_lossy().into_owned()])
                 .unwrap_or_else(|e| {
                     warn!("Failed to get current directory: {}", e);
                     vec![]
                 })
-        });
+        })
+    }
+
+    fn get_allowed_directories(&self) -> String {
+        let local_dirs = self.local_directories();
 
         self.allowed_url_prefixes()
             .iter()
@@ -652,6 +679,34 @@ mod tests {
             options.init_script()[2],
             "SET allowed_directories = ['https://data.example.com/','s3://bucket/reports/','https://','/data'];"
         );
+    }
+
+    #[test]
+    fn redacted_paths_hide_directories_database_and_home() {
+        let options = Options {
+            allowed_directories: Some(vec!["/srv/data".to_string(), String::new()]),
+            db_file: Some("/srv/db/app.duckdb".to_string()),
+            ..test_opts()
+        };
+        let paths = options.redacted_paths();
+        assert!(
+            paths.contains(&("/srv/data".into(), String::new())),
+            "{paths:?}"
+        );
+        assert!(
+            paths.contains(&("/srv/db/app.duckdb".into(), "app.duckdb".to_string())),
+            "{paths:?}"
+        );
+        if let Some(home) = env::var_os("HOME") {
+            assert!(paths.contains(&(home.into(), "~".to_string())), "{paths:?}");
+        }
+        assert!(!paths.iter().any(|(path, _)| path.as_os_str().is_empty()));
+    }
+
+    #[test]
+    fn redacted_paths_default_to_current_directory() {
+        let cwd = env::current_dir().unwrap();
+        assert!(test_opts().redacted_paths().contains(&(cwd, String::new())));
     }
 
     #[test]

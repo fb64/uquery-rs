@@ -8,6 +8,7 @@ pub const CONTENT_TYPE_ANY: &str = "*/*";
 
 pub mod auth;
 pub mod consumers;
+mod redact;
 pub mod request;
 pub mod response;
 pub mod routers;

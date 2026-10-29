@@ -306,6 +306,29 @@ async fn query_sql_error_test() {
 }
 
 #[tokio::test]
+async fn sql_error_hides_server_paths_test() {
+    let router = create_router(
+        make_engine(false),
+        RouterOptions {
+            redacted_paths: vec![("/uquery-test-data".into(), String::new())],
+            ..Default::default()
+        },
+    );
+    let request = Request::builder()
+        .method(http::Method::POST)
+        .uri("/")
+        .header(CONTENT_TYPE, "text/plain")
+        .body(Body::from("SELECT * FROM '/uquery-test-data/missing.csv'"))
+        .unwrap();
+    let response = router.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let error: Value = serde_json::from_slice(&read_response(response).await).unwrap();
+    let detail = error["detail"].as_str().unwrap();
+    assert!(detail.contains("\"missing.csv\""), "{detail}");
+    assert!(!detail.contains("uquery-test-data"), "{detail}");
+}
+
+#[tokio::test]
 async fn read_csv_test() {
     let response = perform_json_request(
         QueryRequest::new("select * from read_csv('tests/test.csv')".to_string()),
