@@ -81,6 +81,8 @@ By default µQuery only runs single `SELECT` queries (including `FROM …`, `WIT
 
 All clients share the same DuckDB database, so these statements would let any client write files in the [allowed directories](#allowed-directories), or create tables and views that change what other clients see. Enable them with `--allow-writes` only when all clients are trusted.
 
+Queries using functions or views that reveal the server's settings, secrets, file paths or other clients' activity are rejected with HTTP 403 as well: `duckdb_settings()`, `current_setting()`, `pg_settings`, `duckdb_secrets()`, `which_secret()`, `duckdb_databases()`, `pragma_database_list`, `duckdb_extensions()`, `duckdb_temporary_files()`, `duckdb_external_file_cache()`, `duckdb_logs()` and `duckdb_prepared_statements()`. Catalog introspection (`duckdb_tables()`, `duckdb_columns()`, `information_schema`, `SHOW TABLES`, `DESCRIBE`) stays available. `--allow-writes` lifts this restriction too.
+
 ### Browser clients
 
 When CORS is disabled, µQuery rejects requests sent by web browsers (recognized by their `Origin` header) with HTTP 403. Without this check, any web page could make its visitors' browsers send queries to a µQuery server they can reach, even without reading the results. Tools such as `curl`, `httpie` and HTTP client libraries don't send `Origin` and are not affected.

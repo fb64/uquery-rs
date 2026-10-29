@@ -182,9 +182,10 @@ impl ExecutableQuery for DuckDbQuery {
     }
 }
 
-/// Rejects anything but a single `SELECT` statement. `json_serialize_sql` uses
-/// DuckDB's own parser and only serializes `SELECT` statements, so it classifies
-/// statements exactly as they will be executed.
+/// Rejects anything but a single `SELECT` statement, and queries using
+/// [`SERVER_INTROSPECTION`]. `json_serialize_sql` uses DuckDB's own parser and only
+/// serializes `SELECT` statements, so it classifies statements exactly as they will
+/// be executed.
 fn check_read_only(conn: &Connection, sql: &str) -> Result<(), EngineError> {
     let serialized: String =
         conn.query_row("SELECT json_serialize_sql(?::VARCHAR)", [sql], |row| {
@@ -203,10 +204,58 @@ fn check_read_only(conn: &Connection, sql: &str) -> Result<(), EngineError> {
         ));
     }
     match serialized["statements"].as_array().map(Vec::len) {
-        Some(0 | 1) => Ok(()),
-        _ => Err(EngineError::Forbidden(
-            "only one statement per query is allowed".to_string(),
-        )),
+        Some(0 | 1) => {}
+        _ => {
+            return Err(EngineError::Forbidden(
+                "only one statement per query is allowed".to_string(),
+            ));
+        }
+    }
+    match find_server_introspection(&serialized) {
+        Some(name) => Err(EngineError::Forbidden(format!(
+            "{name} is not available to API clients"
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// Functions and views revealing the server's settings, secrets, file paths or other
+/// clients' activity. Catalog introspection (`duckdb_tables()`, `DESCRIBE`, ...) stays
+/// available.
+const SERVER_INTROSPECTION: &[&str] = &[
+    "current_setting",
+    "duckdb_databases",
+    "duckdb_extensions",
+    "duckdb_external_file_cache",
+    "duckdb_log_contexts",
+    "duckdb_logs",
+    "duckdb_logs_parsed",
+    "duckdb_prepared_statements",
+    "duckdb_secrets",
+    "duckdb_settings",
+    "duckdb_temporary_files",
+    "pg_settings",
+    "pragma_database_list",
+    "which_secret",
+];
+
+/// Returns the first server introspection function or view the parsed query uses,
+/// wherever it appears (subquery, CTE, ...) and however it is qualified or cased.
+fn find_server_introspection(node: &serde_json::Value) -> Option<String> {
+    match node {
+        serde_json::Value::Object(fields) => {
+            let name = fields
+                .get("function_name")
+                .or_else(|| fields.get("table_name"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_lowercase);
+            if let Some(name) = name.filter(|n| SERVER_INTROSPECTION.contains(&n.as_str())) {
+                return Some(name);
+            }
+            fields.values().find_map(find_server_introspection)
+        }
+        serde_json::Value::Array(items) => items.iter().find_map(find_server_introspection),
+        _ => None,
     }
 }
 
@@ -322,6 +371,56 @@ mod tests {
         ] {
             engine.query(sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
         }
+    }
+
+    #[test]
+    fn read_only_rejects_server_introspection_test() {
+        let engine = make_engine();
+        for sql in [
+            "SELECT * FROM duckdb_settings()",
+            "SELECT current_setting('allowed_directories')",
+            "SELECT * FROM pg_catalog.pg_settings",
+            "SELECT * FROM duckdb_secrets()",
+            "SELECT * FROM which_secret('s3://bucket/file', 's3')",
+            "SELECT path FROM duckdb_databases()",
+            "SELECT * FROM pragma_database_list",
+            "SELECT install_path FROM duckdb_extensions()",
+            "SELECT * FROM duckdb_temporary_files()",
+            "SELECT * FROM duckdb_external_file_cache()",
+            "SELECT * FROM duckdb_logs()",
+            "SELECT * FROM duckdb_prepared_statements()",
+            // Hidden in a subquery or a CTE, qualified, or in another case.
+            "SELECT 1 WHERE 'x' IN (SELECT name FROM duckdb_settings())",
+            "WITH s AS (FROM duckdb_secrets()) FROM s",
+            "FROM main.duckdb_settings()",
+            "SELECT * FROM \"DuckDB_Settings\"()",
+            "SELECT upper(CURRENT_SETTING('threads'))",
+        ] {
+            let err = engine.query(sql).unwrap_err();
+            assert!(matches!(err, EngineError::Forbidden(_)), "{sql}: {err}");
+        }
+    }
+
+    #[test]
+    fn read_only_allows_catalog_introspection_test() {
+        let engine = make_engine();
+        for sql in [
+            "SELECT * FROM duckdb_tables()",
+            "SELECT * FROM duckdb_columns()",
+            "SELECT * FROM information_schema.tables",
+            "SHOW TABLES",
+            "SELECT version()",
+        ] {
+            engine.query(sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+    }
+
+    #[test]
+    fn allow_writes_allows_server_introspection_test() {
+        let engine = make_engine().allow_writes(true);
+        engine
+            .query("SELECT name, value FROM duckdb_settings()")
+            .unwrap();
     }
 
     #[test]
