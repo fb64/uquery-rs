@@ -2,6 +2,7 @@ use crate::core::engine::{QueryCanceller, RecordBatchConsumer, UQueryEngine};
 use crate::core::error::{EngineError, UQueryError};
 use crate::web::auth::{reject_browser_requests, require_api_key};
 use crate::web::consumers::{ArrowConsumer, WriterConsumer};
+use crate::web::redact::redact_paths;
 use crate::web::request::QueryRequest;
 use crate::web::response::{ArrowCodec, QueryResponseFormat};
 use crate::web::{
@@ -24,6 +25,7 @@ use axum::{Router, middleware};
 use futures_util::{Stream, StreamExt};
 use std::future::Future;
 use std::io;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -164,12 +166,18 @@ pub struct RouterOptions {
     pub max_query_duration: Option<Duration>,
     /// Require this API key on queries.
     pub api_key: Option<String>,
+    /// Server paths replaced in the SQL errors sent to clients, each with its
+    /// replacement, e.g. `("/home/me", "~")`. An empty replacement makes the paths
+    /// below it relative: with `("/srv/data", "")`, `/srv/data/sales.csv` becomes
+    /// `sales.csv`. The server log keeps the original message.
+    pub redacted_paths: Vec<(PathBuf, String)>,
 }
 
 pub struct UQueryState {
     pub engine: Arc<dyn UQueryEngine>,
     pub query_timeout: Option<Duration>,
     pub max_query_duration: Option<Duration>,
+    pub redacted_paths: Vec<(PathBuf, String)>,
 }
 
 pub fn create_router(engine: Arc<dyn UQueryEngine>, options: RouterOptions) -> Router {
@@ -178,11 +186,13 @@ pub fn create_router(engine: Arc<dyn UQueryEngine>, options: RouterOptions) -> R
         query_timeout,
         max_query_duration,
         api_key,
+        redacted_paths,
     } = options;
     let state = Arc::new(UQueryState {
         engine,
         query_timeout,
         max_query_duration,
+        redacted_paths,
     });
     // Arrow responses with negotiated IPC buffer compression are already compressed,
     // so the outer gzip layer skips them.
@@ -333,7 +343,7 @@ async fn query(
             return Err(UQueryError {
                 status_code: StatusCode::BAD_REQUEST.as_u16(),
                 title: "SQL Error".to_string(),
-                detail: err.to_string(),
+                detail: redact_paths(&err.to_string(), &state.redacted_paths),
             });
         }
         Err(_) => {

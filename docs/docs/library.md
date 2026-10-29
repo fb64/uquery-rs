@@ -74,6 +74,8 @@ let router = create_router(
         query_timeout: Some(Duration::from_secs(30)),       // until the first batch
         max_query_duration: Some(Duration::from_secs(600)), // including streaming
         api_key: Some("my-secret-key".into()),              // None for an open API
+        // Server paths hidden from SQL errors: "/srv/data/a.csv" becomes "a.csv"
+        redacted_paths: vec![("/srv/data".into(), String::new())],
     },
 );
 let app = axum::Router::new().nest("/uquery", router);
