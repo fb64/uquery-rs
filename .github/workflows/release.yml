@@ -1,8 +1,8 @@
 name: uQuery Release (binaries, docker)
 
 # Triggered on version tags or manually.
-# Manual dispatch accepts an optional tag so a failed release can be retried
-# against an existing tag without creating a new one.
+# Manual dispatch from a tag accepts that tag as input, so a failed release can be
+# retried without creating a new one.
 on:
   workflow_dispatch:
     inputs:
@@ -287,7 +287,7 @@ jobs:
   # Runs on tags or when a tag is supplied via workflow_dispatch.
   # The release is created as a DRAFT so it can be reviewed before publishing.
   # To retry a failed release without a new tag: re-trigger via workflow_dispatch
-  # and set the tag input (e.g. v0.6.0).
+  # from that tag and set the tag input (e.g. v0.6.0).
   github-release:
     name: GitHub Release
     # Holds ZIPSIGN_PRIVATE_KEY, the base64 of the zipsign key matching src/cli/release.pub.
@@ -299,7 +299,17 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
 
     steps:
+      # The binaries come from the run's ref: signing them for another tag would make
+      # self-update accept the wrong code.
+      - name: Check the tag matches the build
+        if: inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        run: test "$TAG" = "$GITHUB_REF_NAME"
+
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Download all binaries
         uses: actions/download-artifact@v8
