@@ -241,6 +241,8 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=sha
+          labels: |
+            org.opencontainers.image.description=A lightweight server that provides a simple API to query good old data files (CSV, Json, Parquet ...) with SQL
 
       # Download only the two architectures needed for the multi-platform image.
       - name: Download Linux binaries
@@ -277,6 +279,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ startsWith(github.ref, 'refs/tags/') }}
           tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-to: type=gha,mode=max
           cache-from: type=gha
 
