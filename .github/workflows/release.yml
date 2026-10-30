@@ -287,6 +287,8 @@ jobs:
   # and set the tag input (e.g. v0.6.0).
   github-release:
     name: GitHub Release
+    # Holds ZIPSIGN_PRIVATE_KEY, the base64 of the zipsign key matching src/cli/release.pub.
+    environment: Production
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -294,6 +296,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
 
     steps:
+      - uses: actions/checkout@v6
+
       - name: Download all binaries
         uses: actions/download-artifact@v8
         with:
@@ -311,6 +315,27 @@ jobs:
           tar -C artifacts/binary-macos-arm64   -czf release/uquery-aarch64-apple-darwin.tar.gz       uquery
           zip -j release/uquery-x86_64-pc-windows-msvc.zip   artifacts/binary-windows-amd64/uquery.exe
           zip -j release/uquery-aarch64-pc-windows-msvc.zip artifacts/binary-windows-arm64/uquery.exe
+
+      # sccache is not installed in this job.
+      - name: Install zipsign
+        run: env -u RUSTC_WRAPPER cargo install zipsign --version 0.2.2 --locked
+
+      # The signature goes inside the archive, so `tar` and `unzip` work as before.
+      - name: Sign archives
+        env:
+          ZIPSIGN_PRIVATE_KEY: ${{ secrets.ZIPSIGN_PRIVATE_KEY }}
+        run: |
+          key="$RUNNER_TEMP/zipsign.key"
+          (umask 077; echo "$ZIPSIGN_PRIVATE_KEY" | base64 -d > "$key")
+          for archive in release/*.tar.gz; do zipsign sign tar -f "$archive" "$key"; done
+          for archive in release/*.zip; do zipsign sign zip -f "$archive" "$key"; done
+          rm "$key"
+
+      # Installed binaries reject a release not signed with the key they embed.
+      - name: Verify signatures
+        run: |
+          for archive in release/*.tar.gz; do zipsign verify tar "$archive" src/cli/release.pub; done
+          for archive in release/*.zip; do zipsign verify zip "$archive" src/cli/release.pub; done
 
       - name: Create draft GitHub release
         uses: softprops/action-gh-release@v3

@@ -32,7 +32,7 @@ async-trait = { version = "0.1.88", optional = true }
 pingora = { version = "0.8.0", features=["proxy"], optional = true }
 getrandom = "0.3"
 subtle = "2.6"
-self_update = { version = "1.3", default-features = false, features = ["ureq", "rustls", "github", "progress-bar", "archive-tar", "compression-tar-gz", "archive-zip", "compression-zip-deflate", "checksums"], optional = true }
+self_update = { version = "1.3", default-features = false, features = ["ureq", "rustls", "github", "progress-bar", "archive-tar", "compression-tar-gz", "archive-zip", "compression-zip-deflate", "checksums", "signatures"], optional = true }
 
 [dev-dependencies]
 polars = { version = "0.55"}
