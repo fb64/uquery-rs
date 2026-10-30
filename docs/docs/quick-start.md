@@ -109,6 +109,13 @@ uquery --self-update
 Extensions are tied to the bundled DuckDB version: if you pre-installed them, run `uquery --install-extensions` again after an update.
 With Docker, pull the latest image instead.
 
+`--self-update` only installs archives signed with the µQuery release key. To check an archive you downloaded yourself, use [zipsign](https://github.com/Kijewski/zipsign) (`zipsign verify zip` for the Windows archives):
+```shell
+cargo install zipsign
+curl -fsSLO https://raw.githubusercontent.com/fb64/uquery-rs/main/src/cli/release.pub
+zipsign verify tar uquery-x86_64-unknown-linux-gnu.tar.gz release.pub
+```
+
 
 ## Simple Query example
 

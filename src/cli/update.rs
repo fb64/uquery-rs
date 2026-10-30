@@ -1,10 +1,12 @@
 use self_update::backends::github::Update;
 use self_update::update::{Release, UpdateStrategy};
-use self_update::{cargo_crate_version, get_target};
+use self_update::{VerifyingKey, cargo_crate_version, get_target};
 use std::path::Path;
 
 const REPO_OWNER: &str = "fb64";
 const REPO_NAME: &str = "uquery-rs";
+/// Public key of the zipsign key signing the release archives in `release.yml`.
+const RELEASE_KEY: VerifyingKey = *include_bytes!("release.pub");
 
 fn updater(no_confirm: bool) -> Result<Update, String> {
     Update::configure()
@@ -14,6 +16,7 @@ fn updater(no_confirm: bool) -> Result<Update, String> {
         .current_version(cargo_crate_version!())
         // 0.x minor bumps are semver-incompatible, the default strategy would skip them.
         .update_strategy(UpdateStrategy::Latest)
+        .verifying_keys([RELEASE_KEY])
         .show_download_progress(true)
         .no_confirm(no_confirm)
         .build()
@@ -78,4 +81,27 @@ pub fn run(check_only: bool, no_confirm: bool) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use self_update::verify_signature;
+
+    // self_update skips signatures without a key, and only shows its keys in `Debug`.
+    #[test]
+    fn updater_requires_release_signature() {
+        let updater = format!("{:?}", updater(true).unwrap());
+        assert!(updater.contains(&format!("verifying_keys: [{RELEASE_KEY:?}]")));
+    }
+
+    #[test]
+    fn archives_not_signed_with_release_key_are_rejected() {
+        for archive in ["tests/unsigned.tar.gz", "tests/other-key.tar.gz"] {
+            assert!(
+                verify_signature(archive, &[RELEASE_KEY]).is_err(),
+                "{archive} was accepted"
+            );
+        }
+    }
 }

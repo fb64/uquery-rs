@@ -66,7 +66,7 @@ uquery --install-extensions
 uquery
 ```
 
-Update to the latest release later with `uquery --self-update` (or `uquery --check-update` to only show the release notes).
+Update to the latest release later with `uquery --self-update` (or `uquery --check-update` to only show the release notes). It only installs archives signed with the µQuery release key.
 
 ### Cargo
 
