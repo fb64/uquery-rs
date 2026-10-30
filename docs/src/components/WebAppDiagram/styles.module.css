@@ -1,0 +1,146 @@
+.diagram {
+  container-type: inline-size;
+  margin: 0 0 var(--ifm-leading);
+}
+
+.flow {
+  display: flex;
+  align-items: center;
+}
+
+.node {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.6rem 0.4rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: var(--ifm-global-radius);
+  background: var(--ifm-background-surface-color);
+  text-align: center;
+}
+
+.name {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: var(--ifm-font-weight-semibold);
+}
+
+.code {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.82rem;
+}
+
+.role {
+  display: block;
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.75rem;
+}
+
+.arrow {
+  flex: 0 0 4.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.arrow.sql {
+  flex-basis: 3rem;
+  color: var(--ifm-color-primary);
+}
+
+.arrowLabel {
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.sql .arrowLabel {
+  font-weight: var(--ifm-font-weight-bold);
+}
+
+.line {
+  position: relative;
+  width: 100%;
+  border-top: 1.5px solid currentColor;
+}
+
+.line::after {
+  content: '';
+  position: absolute;
+  top: -4.75px;
+  right: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 7px solid currentColor;
+}
+
+/* The one strong element: SQL only exists inside this area. */
+.boundary {
+  flex: 2.35 1 0;
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 1.6rem 0.5rem 0.6rem;
+  border: 1.5px dashed var(--ifm-color-primary);
+  border-radius: calc(var(--ifm-global-radius) * 2);
+  background: color-mix(in srgb, var(--ifm-color-primary) 9%, transparent);
+}
+
+.boundaryLabel {
+  position: absolute;
+  top: 0.3rem;
+  left: 0.6rem;
+  color: var(--ifm-color-primary-darker);
+  font-size: 0.75rem;
+  font-weight: var(--ifm-font-weight-semibold);
+}
+
+[data-theme='dark'] .boundaryLabel {
+  color: var(--ifm-color-primary);
+}
+
+/* Follows the width of the column, not of the screen: the table of contents narrows it too. */
+@container (max-width: 620px) {
+  .flow,
+  .boundary {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .node,
+  .boundary {
+    flex: none;
+  }
+
+  .arrow,
+  .arrow.sql {
+    flex: none;
+    flex-direction: row;
+    justify-content: center;
+    gap: 0.5rem;
+    height: 2rem;
+  }
+
+  .arrowLabel {
+    order: 1;
+  }
+
+  .line {
+    width: 0;
+    height: 100%;
+    border-top: 0;
+    border-left: 1.5px solid currentColor;
+  }
+
+  .line::after {
+    top: auto;
+    right: auto;
+    bottom: 0;
+    left: -4.75px;
+    border-top: 7px solid currentColor;
+    border-right: 4px solid transparent;
+    border-bottom: 0;
+    border-left: 4px solid transparent;
+  }
+}
