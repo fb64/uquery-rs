@@ -1,8 +1,6 @@
 # glibc and libstdc++ only: no shell, no package manager.
 FROM gcr.io/distroless/cc-debian13@sha256:d74d144baa124dd9defd01d71872bb56c49d4441dba6153ccf790364f97e64b1
 LABEL org.opencontainers.image.authors="dev@uquery.dev"
-LABEL org.opencontainers.image.source="https://github.com/fb64/uquery-rs"
-LABEL org.opencontainers.image.description="A lightweight server that provide a simple API to query good old data files (CSV, Json, Parquet ...) with SQL"
 
 ARG TARGETARCH
 COPY bin/uquery-${TARGETARCH} /usr/local/bin/uquery
