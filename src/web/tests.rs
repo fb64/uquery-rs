@@ -23,6 +23,7 @@ use std::io::Cursor;
 use std::str::from_utf8;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tower::ServiceExt;
 
 struct SlowEngine(Duration);
@@ -771,6 +772,50 @@ async fn max_query_duration_aborts_streaming_test() {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(read_response(response).await, b"n\n1\n");
     }
+}
+
+/// Sends `sql` as CSV query on a new connection, without reading the response.
+async fn send_query(addr: std::net::SocketAddr, sql: &str) -> tokio::net::TcpStream {
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let request = format!(
+        "POST / HTTP/1.1\r\nHost: test\r\nAccept: text/csv\r\nConnection: close\r\n\
+         Content-Length: {}\r\n\r\n{sql}",
+        sql.len()
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    stream
+}
+
+// A real server stops polling the body once the socket is full, unlike `oneshot`.
+#[tokio::test(flavor = "multi_thread")]
+async fn max_query_duration_frees_connections_of_stalled_clients_test() {
+    let router = create_router(
+        make_engine(false),
+        RouterOptions {
+            max_query_duration: Some(Duration::from_secs(1)),
+            ..Default::default()
+        },
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    // As many clients as pooled connections (2), which never read their ~40 MB result.
+    let mut stalled = Vec::new();
+    for _ in 0..2 {
+        stalled.push(send_query(addr, "SELECT * FROM range(5000000)").await);
+    }
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let mut stream = send_query(addr, "SELECT 1 AS n").await;
+    let mut response = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+        .await
+        .expect("no response")
+        .unwrap();
+    let response = String::from_utf8_lossy(&response);
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    drop(stalled);
 }
 
 #[tokio::test]
