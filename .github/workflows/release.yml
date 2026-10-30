@@ -291,7 +291,7 @@ jobs:
   github-release:
     name: GitHub Release
     # Holds ZIPSIGN_PRIVATE_KEY, the base64 of the zipsign key matching src/cli/release.pub.
-    environment: Production
+    environment: release
     permissions:
       contents: write
     runs-on: ubuntu-latest
