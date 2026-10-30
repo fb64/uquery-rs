@@ -183,7 +183,7 @@ impl ExecutableQuery for DuckDbQuery {
 }
 
 /// Rejects anything but a single `SELECT` statement, and queries using
-/// [`SERVER_INTROSPECTION`]. `json_serialize_sql` uses DuckDB's own parser and only
+/// [`BLOCKED_FUNCTIONS`] or [`BLOCKED_VIEWS`]. `json_serialize_sql` uses DuckDB's own parser and only
 /// serializes `SELECT` statements, so it classifies statements exactly as they will
 /// be executed.
 fn check_read_only(conn: &Connection, sql: &str) -> Result<(), EngineError> {
@@ -211,7 +211,7 @@ fn check_read_only(conn: &Connection, sql: &str) -> Result<(), EngineError> {
             ));
         }
     }
-    match find_server_introspection(&serialized) {
+    match find_blocked(&serialized) {
         Some(name) => Err(EngineError::Forbidden(format!(
             "{name} is not available to API clients"
         ))),
@@ -219,14 +219,29 @@ fn check_read_only(conn: &Connection, sql: &str) -> Result<(), EngineError> {
     }
 }
 
-/// Functions and views revealing the server's settings, secrets, file paths or other
-/// clients' activity. Catalog introspection (`duckdb_tables()`, `DESCRIBE`, ...) stays
-/// available.
-const SERVER_INTROSPECTION: &[&str] = &[
+/// Functions not available in read-only mode, because they:
+/// - reveal the server's settings, secrets, file paths or other clients' activity,
+/// - run SQL held in a string, which [`find_blocked`] can't look into,
+/// - change the server's state from a `SELECT`,
+/// - take memory addresses as arguments (`arrow_scan`).
+///
+/// Catalog introspection (`duckdb_tables()`, `DESCRIBE`, ...) stays available.
+const BLOCKED_FUNCTIONS: &[&str] = &[
+    "arrow_scan",
+    "arrow_scan_dumb",
+    "checkpoint",
+    "create_external_resource",
     "current_setting",
+    "deregister_external_resource",
+    "destroy_external_resource",
+    "disable_logging",
+    "disable_profiling",
     "duckdb_databases",
+    "duckdb_extension_repositories",
     "duckdb_extensions",
     "duckdb_external_file_cache",
+    "duckdb_external_resource_types",
+    "duckdb_external_resources",
     "duckdb_log_contexts",
     "duckdb_logs",
     "duckdb_logs_parsed",
@@ -234,27 +249,45 @@ const SERVER_INTROSPECTION: &[&str] = &[
     "duckdb_secrets",
     "duckdb_settings",
     "duckdb_temporary_files",
-    "pg_settings",
-    "pragma_database_list",
+    "enable_logging",
+    "enable_profiling",
+    "force_checkpoint",
+    "json_execute_serialized_sql",
+    "query",
+    "query_table",
+    "register_external_resource",
+    "register_external_resource_type",
+    "truncate_duckdb_logs",
     "which_secret",
 ];
 
-/// Returns the first server introspection function or view the parsed query uses,
-/// wherever it appears (subquery, CTE, ...) and however it is qualified or cased.
-fn find_server_introspection(node: &serde_json::Value) -> Option<String> {
+/// Built-in views revealing the same information as [`BLOCKED_FUNCTIONS`]. Kept apart
+/// so that a client's table can be named like a blocked function, e.g. `query`.
+const BLOCKED_VIEWS: &[&str] = &[
+    "duckdb_databases",
+    "duckdb_logs",
+    "pg_prepared_statements",
+    "pg_settings",
+    "pragma_database_list",
+];
+
+/// Returns the first blocked function or view the parsed query uses, wherever it
+/// appears (subquery, CTE, ...) and however it is qualified or cased.
+fn find_blocked(node: &serde_json::Value) -> Option<String> {
     match node {
         serde_json::Value::Object(fields) => {
-            let name = fields
-                .get("function_name")
-                .or_else(|| fields.get("table_name"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_lowercase);
-            if let Some(name) = name.filter(|n| SERVER_INTROSPECTION.contains(&n.as_str())) {
-                return Some(name);
-            }
-            fields.values().find_map(find_server_introspection)
+            let blocked = |field: &str, names: &[&str]| {
+                fields
+                    .get(field)
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_lowercase)
+                    .filter(|name| names.contains(&name.as_str()))
+            };
+            blocked("function_name", BLOCKED_FUNCTIONS)
+                .or_else(|| blocked("table_name", BLOCKED_VIEWS))
+                .or_else(|| fields.values().find_map(find_blocked))
         }
-        serde_json::Value::Array(items) => items.iter().find_map(find_server_introspection),
+        serde_json::Value::Array(items) => items.iter().find_map(find_blocked),
         _ => None,
     }
 }
@@ -395,10 +428,138 @@ mod tests {
             "FROM main.duckdb_settings()",
             "SELECT * FROM \"DuckDB_Settings\"()",
             "SELECT upper(CURRENT_SETTING('threads'))",
+            "SUMMARIZE SELECT * FROM duckdb_settings()",
+            // Run SQL held in a string, which the check can't look into.
+            "SELECT * FROM query('SELECT * FROM duckdb_settings()')",
+            "SELECT * FROM query_table('pg_settings')",
+            "SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT 1'))",
+            "SELECT * FROM pg_prepared_statements",
+            "SELECT * FROM duckdb_extension_repositories()",
+            // Change the server's state from a SELECT.
+            "SELECT * FROM checkpoint()",
+            "SELECT * FROM force_checkpoint()",
+            "SELECT * FROM truncate_duckdb_logs()",
+            "SELECT * FROM enable_logging()",
+            "SELECT * FROM disable_logging()",
+            "SELECT * FROM enable_profiling()",
+            "SELECT * FROM disable_profiling()",
+            "SELECT * FROM create_external_resource('x')",
+            // Dereferences its arguments.
+            "SELECT * FROM arrow_scan(1, 2, 3)",
         ] {
             let err = engine.query(sql).unwrap_err();
             assert!(matches!(err, EngineError::Forbidden(_)), "{sql}: {err}");
         }
+    }
+
+    #[test]
+    fn read_only_allows_tables_named_like_blocked_functions_test() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE query(x INT); CREATE TABLE checkpoint(x INT);")
+            .unwrap();
+        let engine = DuckDbEngine::new(conn, false, 1).unwrap();
+        for sql in ["SELECT * FROM query", "SELECT * FROM checkpoint"] {
+            engine.query(sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+    }
+
+    /// DuckDB updates add table functions that may reveal or change the server's
+    /// state: this fails on each new one until it is reviewed and listed here or in
+    /// [`BLOCKED_FUNCTIONS`].
+    #[test]
+    fn every_table_function_is_reviewed_test() {
+        const ALLOWED_FUNCTIONS: &[&str] = &[
+            "duckdb_approx_database_count",
+            "duckdb_available_metrics",
+            "duckdb_columns",
+            "duckdb_connection_count",
+            "duckdb_constraints",
+            "duckdb_coordinate_systems",
+            "duckdb_dependencies",
+            "duckdb_dialects",
+            "duckdb_eviction_queues",
+            "duckdb_functions",
+            "duckdb_grammar_extensions",
+            "duckdb_indexes",
+            "duckdb_keywords",
+            "duckdb_memory",
+            "duckdb_optimizers",
+            "duckdb_profiling_settings",
+            "duckdb_schemas",
+            "duckdb_secret_type_parameters",
+            "duckdb_secret_types",
+            "duckdb_sequences",
+            "duckdb_table_sample",
+            "duckdb_tables",
+            "duckdb_triggers",
+            "duckdb_types",
+            "duckdb_variables",
+            "duckdb_views",
+            "generate_series",
+            "glob",
+            "histogram",
+            "histogram_values",
+            "json_each",
+            "json_tree",
+            "parquet_bloom_probe",
+            "parquet_file_metadata",
+            "parquet_full_metadata",
+            "parquet_kv_metadata",
+            "parquet_metadata",
+            "parquet_scan",
+            "parquet_schema",
+            "pragma_collations",
+            "pragma_database_size",
+            "pragma_metadata_info",
+            "pragma_platform",
+            "pragma_show",
+            "pragma_storage_info",
+            "pragma_table_info",
+            "pragma_user_agent",
+            "pragma_version",
+            "range",
+            "read_blob",
+            "read_csv",
+            "read_csv_auto",
+            "read_duckdb",
+            "read_json",
+            "read_json_auto",
+            "read_json_objects",
+            "read_json_objects_auto",
+            "read_ndjson",
+            "read_ndjson_auto",
+            "read_ndjson_objects",
+            "read_parquet",
+            "read_single_csv_file",
+            "read_single_json_file",
+            "read_single_parquet_file",
+            "read_text",
+            "repeat",
+            "repeat_row",
+            "seq_scan",
+            "sniff_csv",
+            "summary",
+            "test_all_types",
+            "test_vector_types",
+            "unnest",
+        ];
+        let conn = Connection::open_in_memory().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT function_name FROM duckdb_functions() \
+                 WHERE function_type IN ('table', 'table_macro') ORDER BY 1",
+            )
+            .unwrap();
+        let unreviewed: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .filter(|name: &String| {
+                !ALLOWED_FUNCTIONS.contains(&name.as_str())
+                    && !BLOCKED_FUNCTIONS.contains(&name.as_str())
+            })
+            .collect();
+        assert!(unreviewed.is_empty(), "unreviewed: {unreviewed:#?}");
     }
 
     #[test]
