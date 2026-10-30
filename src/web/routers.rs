@@ -30,7 +30,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio::io::DuplexStream;
+use tokio::io::{AsyncWrite, DuplexStream};
 use tokio::sync::oneshot;
 use tokio::task::spawn_blocking;
 use tokio::time::{Instant, Sleep};
@@ -95,8 +95,7 @@ impl Drop for CancelOnDrop {
 /// Ends a response body with an error once `deadline` passes, and cancels the query.
 ///
 /// Erroring (instead of ending the body) makes the server abort the response, so the
-/// client cannot mistake a truncated result for a complete one. Dropping the body also
-/// unblocks a query thread waiting on a client that stopped reading.
+/// client cannot mistake a truncated result for a complete one.
 struct DeadlineStream<S> {
     inner: Pin<Box<S>>,
     sleep: Pin<Box<Sleep>>,
@@ -124,6 +123,41 @@ impl<S: Stream<Item = io::Result<Bytes>>> Stream for DeadlineStream<S> {
             ))));
         }
         this.inner.as_mut().poll_next(cx)
+    }
+}
+
+/// Fails writes once the deadline passes. A client that stops reading also stops the
+/// server polling the body, and so [`DeadlineStream`], while the query thread waits
+/// here holding its pooled connection.
+struct DeadlineWriter {
+    inner: DuplexStream,
+    sleep: Option<Pin<Box<Sleep>>>,
+}
+
+impl AsyncWrite for DeadlineWriter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        if let Some(sleep) = &mut this.sleep
+            && sleep.as_mut().poll(cx).is_ready()
+        {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "query exceeded the maximum duration",
+            )));
+        }
+        Pin::new(&mut this.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
     }
 }
 
@@ -246,6 +280,12 @@ async fn query(
     let content_type = format.to_string();
     let sql = query_request.get_sql_query().to_string();
     let (tx, rx) = tokio::io::duplex(1024 * 1024);
+    let writer = DeadlineWriter {
+        inner: tx,
+        sleep: state
+            .max_query_duration
+            .map(|max| Box::pin(tokio::time::sleep_until(start + max))),
+    };
     let reader_stream = ReaderStream::new(rx);
     let (ready_tx, ready_rx) = oneshot::channel::<Result<(), EngineError>>();
     let (done_tx, done_rx) = oneshot::channel::<Result<(), EngineError>>();
@@ -272,7 +312,7 @@ async fn query(
         // produced, ready_tx is still Some — we forward the error so the client
         // gets a 400 instead of a dangling request. Later errors go to done_tx,
         // which fails the response body.
-        let bridge = SyncIoBridge::new(tx);
+        let bridge = SyncIoBridge::new(writer);
         macro_rules! stream_with_notifier {
             ($writer:expr) => {{
                 let mut notifier = FirstBatchNotifier {
