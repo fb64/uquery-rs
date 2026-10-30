@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Public data with µQuery</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+    integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC"
+    crossorigin="anonymous"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Public data with µQuery</h1>
+
+  <h2>NYC taxi trips by hour, January 2024</h2>
+  <canvas id="taxi"></canvas>
+
+  <h2>CO₂ emissions per year (million tonnes)</h2>
+  <select id="country"></select>
+  <canvas id="co2"></canvas>
+
+  <script>
+    async function get(path) {
+      const response = await fetch(path);
+      if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+      return response.json();
+    }
+
+    function draw(canvas, type, labels, data) {
+      Chart.getChart(canvas)?.destroy();
+      new Chart(canvas, {
+        type,
+        data: { labels, datasets: [{ data }] },
+        options: { plugins: { legend: { display: false } } },
+      });
+    }
+
+    async function showTaxiTrips() {
+      const rows = await get("/api/taxi-trips");
+      draw("taxi", "bar", rows.map((r) => r.hour), rows.map((r) => r.trips));
+    }
+
+    async function showEmissions(code) {
+      const rows = await get(`/api/emissions/${code}`);
+      draw("co2", "line", rows.map((r) => r.year), rows.map((r) => r.co2));
+    }
+
+    async function loadCountries() {
+      const rows = await get("/api/countries");
+      const select = document.getElementById("country");
+      select.append(...rows.map((r) => new Option(r.country, r.iso_code)));
+      select.value = "FRA";
+      select.addEventListener("change", () => showEmissions(select.value));
+      await showEmissions(select.value);
+    }
+
+    showTaxiTrips();
+    loadCountries();
+  </script>
+</body>
+</html>

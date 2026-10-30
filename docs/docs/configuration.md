@@ -89,7 +89,7 @@ SQL errors sent to clients don't show the server's paths either: paths in the [a
 
 When CORS is disabled, µQuery rejects requests sent by web browsers (recognized by their `Origin` header) with HTTP 403. Without this check, any web page could make its visitors' browsers send queries to a µQuery server they can reach, even without reading the results. Tools such as `curl`, `httpie` and HTTP client libraries don't send `Origin` and are not affected.
 
-To call µQuery from a web application, enable CORS with `--cors-enabled`, and use an [API key](#api-key).
+To use µQuery in a web application, call it from your application's server, as in the [Build a Web App](./advanced-tutorials/web-app.md) tutorial: the SQL stays out of the page, and servers don't send `Origin`. Otherwise, enable CORS with `--cors-enabled`, which allows every website, and use an [API key](#api-key).
 
 ---
 

@@ -1,0 +1,15 @@
+services:
+  # Not published: only the web app can reach it.
+  uquery:
+    image: ${UQUERY_IMAGE:-docker.io/fb64/uquery:0.8}
+
+  web:
+    image: docker.io/denoland/deno:2.9.8
+    command: run --no-lock --allow-net=0.0.0.0:8000,uquery:8080 --allow-read=public server.js
+    working_dir: /app
+    volumes:
+      - .:/app:ro,z
+    ports:
+      - 127.0.0.1:8000:8000
+    depends_on:
+      - uquery
