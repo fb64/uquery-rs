@@ -34,9 +34,6 @@ curl -fsSL https://install.uquery.dev | sh
 
 Pre-built binaries are available on the [GitHub Releases](https://github.com/fb64/uquery-rs/releases/latest) page.
 
-> [!NOTE]  
-> Windows build is not available yet.
-
 | Platform | Architecture | Asset |
 |---|---|---|
 | macOS | Apple Silicon | `uquery-aarch64-apple-darwin.tar.gz` |
@@ -44,6 +41,8 @@ Pre-built binaries are available on the [GitHub Releases](https://github.com/fb6
 | Linux | x86_64 | `uquery-x86_64-unknown-linux-gnu.tar.gz` |
 | Linux | ARM64 | `uquery-aarch64-unknown-linux-gnu.tar.gz` |
 | Linux | x86 (32-bit) | `uquery-i686-unknown-linux-gnu.tar.gz` |
+| Windows | x86_64 | `uquery-x86_64-pc-windows-msvc.zip` |
+| Windows | ARM64 | `uquery-aarch64-pc-windows-msvc.zip` |
 
 Once the binary is downloaded and added to your `PATH` you could run
 
