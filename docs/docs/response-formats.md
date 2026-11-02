@@ -134,7 +134,7 @@ table = pa.ipc.open_stream(response.content).read_all()
 JavaScript clients such as Apache Arrow JS don't decode compressed IPC buffers out of the box. Leave out `codecs` and rely on HTTP gzip instead.
 :::
 
-## Streaming behaviour
+## Streaming behavior
 
 All formats are streamed incrementally. µQuery begins writing the response as soon as the first result batch is available — there is no buffering of the full result set. This means:
 

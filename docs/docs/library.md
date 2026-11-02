@@ -42,7 +42,7 @@ The engine only runs single `SELECT` queries and rejects other statements with `
 
 `query` collects the whole result in memory. To stream large results, call `prepare` and pass a `RecordBatchConsumer` to `execute`. The query handle also gives a `canceller` to stop it from another thread.
 
-Errors are returned as `uquery::core::error::EngineError`, which implements `std::error::Error`: `DuckDb` and `Arrow` wrap the underlying error, `Cancelled` is a cancelled query, `Forbidden` is a statement the engine doesn't allow, and `Consumer` carries any error returned by your own `RecordBatchConsumer`.
+Errors are returned as `uquery::core::error::EngineError`, which implements `std::error::Error`: `DuckDb` and `Arrow` wrap the underlying error, `Cancelled` is a canceled query, `Forbidden` is a statement the engine doesn't allow, and `Consumer` carries any error returned by your own `RecordBatchConsumer`.
 
 The `duckdb` and `arrow` crates are re-exported as `uquery::duckdb` and `uquery::arrow`, so their versions always match the engine's.
 
