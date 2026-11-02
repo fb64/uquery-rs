@@ -82,3 +82,41 @@
   background: #0a0c10;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
 }
+
+/* Brand name above the H1, styled like the former µQuery title. */
+.brand {
+  font-size: 3rem;
+  font-weight: var(--ifm-heading-font-weight);
+  line-height: 1.2;
+  margin-bottom: 0.5rem;
+}
+
+.heroTitle {
+  font-size: 2rem;
+}
+
+.videoSummary {
+  max-width: 960px;
+  margin: 1rem auto 0;
+}
+
+.section {
+  padding: 2rem 0;
+}
+
+.narrow {
+  max-width: 860px;
+}
+
+.useCase {
+  display: flex;
+  margin-bottom: 1rem;
+}
+
+.useCase > :global(.card) {
+  width: 100%;
+}
+
+.faqItem {
+  margin-top: 1.5rem;
+}

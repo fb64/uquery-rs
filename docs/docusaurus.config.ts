@@ -6,7 +6,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'µQuery',
-  tagline: 'Enable easy and efficient access to your good old data files (CSV, Json, Parquet ...)',
+  tagline: 'Enable easy and efficient access to your good old data files (CSV, JSON, Parquet ...)',
   favicon: 'img/favicon.ico',
 
   // Set the production url of your site here
@@ -50,6 +50,10 @@ const config: Config = {
 
   themeConfig: {
     image: 'img/uquery-social-card.png',
+    metadata: [
+      {property: 'og:site_name', content: 'µQuery'},
+      {property: 'og:type', content: 'website'},
+    ],
     navbar: {
       title: 'µQuery',
       logo: {
